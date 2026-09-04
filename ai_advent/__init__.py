@@ -1,0 +1,2 @@
+"""AI Advent CLI package."""
+
