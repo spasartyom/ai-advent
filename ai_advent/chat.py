@@ -19,6 +19,7 @@ class ChatSession:
         *,
         max_completion_tokens: int | None = None,
         stop: list[str] | None = None,
+        temperature: float | None = None,
     ) -> str:
         self._messages.append({"role": "user", "content": message})
 
@@ -30,6 +31,8 @@ class ChatSession:
             request["max_completion_tokens"] = max_completion_tokens
         if stop is not None:
             request["stop"] = stop
+        if temperature is not None:
+            request["temperature"] = temperature
 
         response = self._chat_completions_api.create(**request)
         answer = _response_text(response)
