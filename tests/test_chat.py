@@ -80,5 +80,23 @@ class ChatSessionTests(unittest.TestCase):
             ],
         )
 
+    def test_temperature_is_sent_to_api(self) -> None:
+        api = FakeChatCompletionsAPI()
+        session = ChatSession(api, "test-model")
+
+        answer = session.ask("Hello", temperature=0.7)
+
+        self.assertEqual(answer, "answer-1")
+        self.assertEqual(
+            api.requests,
+            [
+                {
+                    "model": "test-model",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "temperature": 0.7,
+                },
+            ],
+        )
+
 if __name__ == "__main__":
     unittest.main()

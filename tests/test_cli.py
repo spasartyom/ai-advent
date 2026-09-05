@@ -6,13 +6,17 @@ from types import SimpleNamespace
 from ai_advent.cli import (
     DAY2_MAX_COMPLETION_TOKENS,
     DAY3_MAX_COMPLETION_TOKENS,
+    DAY4_MAX_COMPLETION_TOKENS,
+    DAY4_TEMPERATURES,
     build_city_json_prompt,
     build_expert_group_prompt,
     build_prompt_generation_prompt,
     build_reasoning_comparison_prompt,
     build_step_by_step_prompt,
+    build_temperature_comparison_prompt,
     run_format_comparison,
     run_reasoning_comparison,
+    run_temperature_comparison,
 )
 
 
@@ -128,6 +132,51 @@ class Day3ReasoningComparisonTests(unittest.TestCase):
         )
         self.assertIn("Прямой ответ", output.getvalue())
         self.assertIn("Группа экспертов", output.getvalue())
+
+
+class Day4TemperatureComparisonTests(unittest.TestCase):
+    def test_temperature_comparison_prompt_includes_answers_and_criteria(self) -> None:
+        prompt = build_temperature_comparison_prompt(
+            "Опиши кафе.",
+            {
+                0.0: "answer zero",
+                0.7: "answer medium",
+                1.2: "answer high",
+            },
+        )
+
+        self.assertIn("Опиши кафе.", prompt)
+        self.assertIn("temperature = 0", prompt)
+        self.assertIn("temperature = 0.7", prompt)
+        self.assertIn("temperature = 1.2", prompt)
+        self.assertIn("точности", prompt)
+        self.assertIn("креативности", prompt)
+        self.assertIn("разнообразию", prompt)
+
+    def test_temperature_comparison_sends_expected_requests(self) -> None:
+        api = FakeChatCompletionsAPI()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            run_temperature_comparison(api, "test-model", "Опиши кафе.")
+
+        self.assertEqual(len(api.requests), 4)
+        for index, temperature in enumerate(DAY4_TEMPERATURES):
+            self.assertEqual(
+                api.requests[index]["messages"],
+                [{"role": "user", "content": "Опиши кафе."}],
+            )
+            self.assertEqual(api.requests[index]["temperature"], temperature)
+            self.assertEqual(
+                api.requests[index]["max_completion_tokens"],
+                DAY4_MAX_COMPLETION_TOKENS,
+            )
+
+        self.assertNotIn("temperature", api.requests[3])
+        self.assertIn("Сравни ответы", api.requests[3]["messages"][0]["content"])
+        self.assertIn("temperature = 0", output.getvalue())
+        self.assertIn("temperature = 0.7", output.getvalue())
+        self.assertIn("temperature = 1.2", output.getvalue())
 
 
 if __name__ == "__main__":

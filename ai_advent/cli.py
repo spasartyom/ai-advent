@@ -28,6 +28,12 @@ DEFAULT_DAY3_TASK = (
     "Составь идеальный завтрак для среднестатистического гражданина РФ."
 )
 DAY3_MAX_COMPLETION_TOKENS = 500
+DEFAULT_DAY4_PROMPT = (
+    "Придумай короткое описание нового кафе в центре города Минск, "
+    "которое специализируется на завтраках."
+)
+DAY4_TEMPERATURES = (0.0, 0.7, 1.2)
+DAY4_MAX_COMPLETION_TOKENS = 350
 
 
 def build_city_json_prompt(question: str) -> str:
@@ -93,6 +99,25 @@ def build_reasoning_comparison_prompt(
         "Критерии: культурная уместность для РФ, питательность, "
         "доступность продуктов, умеренная стоимость и практичность утром.\n"
         "Коротко опиши отличия и назови лучший способ."
+    )
+
+
+def build_temperature_comparison_prompt(
+    prompt: str,
+    answers_by_temperature: dict[float, str],
+) -> str:
+    answers = "\n\n".join(
+        f"temperature = {temperature:g}:\n{answer}"
+        for temperature, answer in answers_by_temperature.items()
+    )
+    return (
+        "Сравни ответы модели на один и тот же запрос при разных значениях "
+        "temperature.\n\n"
+        f"Запрос:\n{prompt}\n\n"
+        f"Ответы:\n{answers}\n\n"
+        "Оцени каждый ответ по точности, креативности и разнообразию. "
+        "В конце сформулируй, для каких задач лучше подходит temperature = 0, "
+        "temperature = 0.7 и temperature = 1.2."
     )
 
 
@@ -233,6 +258,40 @@ def run_reasoning_comparison(
         raise SystemExit(1) from error
 
 
+def run_temperature_comparison(
+    chat_completions_api: object,
+    model: str,
+    prompt: str = DEFAULT_DAY4_PROMPT,
+) -> None:
+    answers_by_temperature: dict[float, str] = {}
+    comparison_session = ChatSession(chat_completions_api, model)
+
+    print(f"AI Advent day 4: temperature comparison (model: {model})\n")
+    print(f"Prompt: {prompt}\n")
+
+    try:
+        for temperature in DAY4_TEMPERATURES:
+            print(f"=== temperature = {temperature:g} ===")
+            session = ChatSession(chat_completions_api, model)
+            answer = session.ask(
+                prompt,
+                max_completion_tokens=DAY4_MAX_COMPLETION_TOKENS,
+                temperature=temperature,
+            )
+            answers_by_temperature[temperature] = answer
+            print(f"{answer}\n")
+
+        print("=== Сравнение ===")
+        comparison_answer = comparison_session.ask(
+            build_temperature_comparison_prompt(prompt, answers_by_temperature),
+            max_completion_tokens=DAY4_MAX_COMPLETION_TOKENS,
+        )
+        print(comparison_answer)
+    except APIError as error:
+        print(f"API error: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="AI Advent CLI")
     subparsers = parser.add_subparsers(dest="command")
@@ -257,6 +316,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         nargs="?",
         default=DEFAULT_DAY3_TASK,
         help="analytical task to solve with several prompting strategies",
+    )
+
+    temperature_parser = subparsers.add_parser(
+        "compare-temperature",
+        help="compare answers generated with different temperature values",
+    )
+    temperature_parser.add_argument(
+        "prompt",
+        nargs="?",
+        default=DEFAULT_DAY4_PROMPT,
+        help="prompt to send with several temperature values",
     )
 
     return parser.parse_args(argv)
@@ -289,6 +359,8 @@ def main() -> None:
         run_format_comparison(client.chat.completions, model, args.prompt)
     elif args.command == "compare-reasoning":
         run_reasoning_comparison(client.chat.completions, model, args.task)
+    elif args.command == "compare-temperature":
+        run_temperature_comparison(client.chat.completions, model, args.prompt)
     else:
         session = ChatSession(client.chat.completions, model)
         run_chat(session, model, base_url)
