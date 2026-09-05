@@ -13,13 +13,25 @@ class ChatSession:
         self._model = model
         self._messages: list[dict[str, str]] = []
 
-    def ask(self, message: str) -> str:
+    def ask(
+        self,
+        message: str,
+        *,
+        max_completion_tokens: int | None = None,
+        stop: list[str] | None = None,
+    ) -> str:
         self._messages.append({"role": "user", "content": message})
 
-        response = self._chat_completions_api.create(
-            model=self._model,
-            messages=list(self._messages),
-        )
+        request: dict[str, object] = {
+            "model": self._model,
+            "messages": list(self._messages),
+        }
+        if max_completion_tokens is not None:
+            request["max_completion_tokens"] = max_completion_tokens
+        if stop is not None:
+            request["stop"] = stop
+
+        response = self._chat_completions_api.create(**request)
         answer = _response_text(response)
         self._messages.append({"role": "assistant", "content": answer})
         return answer

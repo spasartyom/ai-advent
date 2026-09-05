@@ -57,6 +57,28 @@ class ChatSessionTests(unittest.TestCase):
             },
         )
 
+    def test_generation_controls_are_sent_to_api(self) -> None:
+        api = FakeChatCompletionsAPI()
+        session = ChatSession(api, "test-model")
+
+        answer = session.ask(
+            "Hello",
+            max_completion_tokens=120,
+            stop=["###END###"],
+        )
+
+        self.assertEqual(answer, "answer-1")
+        self.assertEqual(
+            api.requests,
+            [
+                {
+                    "model": "test-model",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "max_completion_tokens": 120,
+                    "stop": ["###END###"],
+                },
+            ],
+        )
 
 if __name__ == "__main__":
     unittest.main()
