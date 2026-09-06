@@ -1,7 +1,9 @@
 import argparse
 import os
 import sys
+import time
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from ai_advent.chat import ChatSession
 
@@ -34,6 +36,50 @@ DEFAULT_DAY4_PROMPT = (
 )
 DAY4_TEMPERATURES = (0.0, 0.7, 1.2)
 DAY4_MAX_COMPLETION_TOKENS = 350
+DEFAULT_DAY5_PROMPT = (
+    "Ты продуктовый аналитик. Напиши короткую спецификацию MVP для приложения "
+    "“AI Advent Tracker” — сервиса, который помогает новичкам проходить "
+    "30-дневный челлендж по изучению AI.\n\n"
+    "Нужно включить:\n"
+    "1. Целевая аудитория.\n"
+    "2. Главная проблема пользователя.\n"
+    "3. 5 ключевых функций MVP.\n"
+    "4. Что НЕ входит в MVP.\n"
+    "5. Простая пользовательская история.\n"
+    "6. 3 метрики успеха.\n"
+    "7. 3 риска и способы их снизить.\n\n"
+    "Ограничение: до 900 слов. Пиши конкретно, без маркетинговой воды. "
+    "Верни только спецификацию, без дополнительных вопросов."
+)
+DAY5_MODELS = ("glm-4.5-flash", "glm-4.5-air", "glm-5")
+DAY5_MAX_TOKENS = 10200
+DAY5_JUDGE_MODEL = "glm-5"
+ZAI_PRICES_PER_1M_TOKENS: dict[str, tuple[float, float]] = {
+    "glm-5.1": (1.4, 4.4),
+    "glm-5": (1.0, 3.2),
+    "glm-5-turbo": (1.2, 4.0),
+    "glm-4.7": (0.6, 2.2),
+    "glm-4.7-flashx": (0.07, 0.4),
+    "glm-4.6": (0.6, 2.2),
+    "glm-4.5": (0.6, 2.2),
+    "glm-4.5-x": (2.2, 8.9),
+    "glm-4.5-air": (0.2, 1.1),
+    "glm-4.5-airx": (1.1, 4.5),
+    "glm-4-32b-0414-128k": (0.1, 0.1),
+    "glm-4.7-flash": (0.0, 0.0),
+    "glm-4.5-flash": (0.0, 0.0),
+}
+
+
+@dataclass(frozen=True)
+class ModelComparisonResult:
+    model: str
+    answer: str
+    elapsed_seconds: float
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    total_tokens: int | None
+    cost_usd: float | None
 
 
 def build_city_json_prompt(question: str) -> str:
@@ -119,6 +165,55 @@ def build_temperature_comparison_prompt(
         "В конце сформулируй, для каких задач лучше подходит temperature = 0, "
         "temperature = 0.7 и temperature = 1.2."
     )
+
+
+def build_model_comparison_prompt(
+    prompt: str,
+    results: list[ModelComparisonResult],
+) -> str:
+    answers = "\n\n".join(
+        (
+            f"Модель: {result.model}\n"
+            f"Время: {result.elapsed_seconds:.2f} сек.\n"
+            f"Токены: {format_optional_int(result.total_tokens)}\n"
+            f"Стоимость: {format_optional_cost(result.cost_usd)}\n"
+            f"Ответ:\n{result.answer}"
+        )
+        for result in results
+    )
+    return (
+        "Сравни ответы разных GLM-моделей на один и тот же запрос.\n\n"
+        f"Запрос:\n{prompt}\n\n"
+        f"Ответы и метрики:\n{answers}\n\n"
+        "Критерии: точность, полнота, ясность, следование формату, скорость "
+        "и стоимость. Дай короткий вывод о различиях между моделями."
+    )
+
+
+def calculate_zai_cost_usd(
+    model: str,
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+) -> float | None:
+    prices = ZAI_PRICES_PER_1M_TOKENS.get(model.lower())
+    if prices is None or prompt_tokens is None or completion_tokens is None:
+        return None
+
+    input_price, output_price = prices
+    return (
+        prompt_tokens / 1_000_000 * input_price
+        + completion_tokens / 1_000_000 * output_price
+    )
+
+
+def format_optional_int(value: int | None) -> str:
+    return "n/a" if value is None else str(value)
+
+
+def format_optional_cost(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"${value:.6f}"
 
 
 def run_chat(
@@ -292,6 +387,80 @@ def run_temperature_comparison(
         raise SystemExit(1) from error
 
 
+def run_model_comparison(
+    chat_completions_api: object,
+    prompt: str = DEFAULT_DAY5_PROMPT,
+    models: tuple[str, ...] = DAY5_MODELS,
+    judge_model: str = DAY5_JUDGE_MODEL,
+) -> None:
+    results: list[ModelComparisonResult] = []
+
+    print("AI Advent day 5: GLM model comparison\n")
+    print(f"Prompt: {prompt}\n")
+    print(f"Models: {', '.join(models)}")
+    print(f"Judge model: {judge_model}\n")
+
+    try:
+        for model in models:
+            print(f"=== {model} ===")
+            session = ChatSession(chat_completions_api, model)
+            started_at = time.perf_counter()
+            response = session.ask_with_metadata(
+                prompt,
+                max_tokens=DAY5_MAX_TOKENS,
+            )
+            elapsed_seconds = time.perf_counter() - started_at
+            cost_usd = calculate_zai_cost_usd(
+                model,
+                response.prompt_tokens,
+                response.completion_tokens,
+            )
+            result = ModelComparisonResult(
+                model=model,
+                answer=response.text,
+                elapsed_seconds=elapsed_seconds,
+                prompt_tokens=response.prompt_tokens,
+                completion_tokens=response.completion_tokens,
+                total_tokens=response.total_tokens,
+                cost_usd=cost_usd,
+            )
+            results.append(result)
+
+            print(f"Time: {elapsed_seconds:.2f}s")
+            print(
+                "Tokens: "
+                f"prompt={format_optional_int(response.prompt_tokens)}, "
+                f"completion={format_optional_int(response.completion_tokens)}, "
+                f"total={format_optional_int(response.total_tokens)}"
+            )
+            print(f"Estimated cost: {format_optional_cost(cost_usd)}")
+            print(f"{response.text}\n")
+
+        print("=== Сводная таблица ===")
+        print("model | time_s | prompt_tokens | completion_tokens | total_tokens | cost_usd")
+        print("--- | ---: | ---: | ---: | ---: | ---:")
+        for result in results:
+            print(
+                f"{result.model} | "
+                f"{result.elapsed_seconds:.2f} | "
+                f"{format_optional_int(result.prompt_tokens)} | "
+                f"{format_optional_int(result.completion_tokens)} | "
+                f"{format_optional_int(result.total_tokens)} | "
+                f"{format_optional_cost(result.cost_usd)}"
+            )
+
+        print("\n=== Сравнение качества ===")
+        comparison_session = ChatSession(chat_completions_api, judge_model)
+        comparison_answer = comparison_session.ask(
+            build_model_comparison_prompt(prompt, results),
+            max_tokens=DAY5_MAX_TOKENS,
+        )
+        print(comparison_answer)
+    except APIError as error:
+        print(f"API error: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="AI Advent CLI")
     subparsers = parser.add_subparsers(dest="command")
@@ -329,6 +498,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="prompt to send with several temperature values",
     )
 
+    model_parser = subparsers.add_parser(
+        "compare-models",
+        help="compare several GLM models using the same prompt",
+    )
+    model_parser.add_argument(
+        "prompt",
+        nargs="?",
+        default=DEFAULT_DAY5_PROMPT,
+        help="prompt to send to every model",
+    )
+    model_parser.add_argument(
+        "--models",
+        default=",".join(DAY5_MODELS),
+        help="comma-separated model names to compare",
+    )
+    model_parser.add_argument(
+        "--judge-model",
+        default=DAY5_JUDGE_MODEL,
+        help="model used to compare the generated answers",
+    )
+
     return parser.parse_args(argv)
 
 
@@ -361,6 +551,18 @@ def main() -> None:
         run_reasoning_comparison(client.chat.completions, model, args.task)
     elif args.command == "compare-temperature":
         run_temperature_comparison(client.chat.completions, model, args.prompt)
+    elif args.command == "compare-models":
+        models = tuple(
+            model_name.strip()
+            for model_name in args.models.split(",")
+            if model_name.strip()
+        )
+        run_model_comparison(
+            client.chat.completions,
+            args.prompt,
+            models,
+            args.judge_model,
+        )
     else:
         session = ChatSession(client.chat.completions, model)
         run_chat(session, model, base_url)

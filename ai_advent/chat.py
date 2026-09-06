@@ -1,8 +1,17 @@
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 
 class ChatCompletionsAPI(Protocol):
     def create(self, **kwargs: object) -> object: ...
+
+
+@dataclass(frozen=True)
+class ChatResponse:
+    text: str
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
 
 
 class ChatSession:
@@ -18,9 +27,27 @@ class ChatSession:
         message: str,
         *,
         max_completion_tokens: int | None = None,
+        max_tokens: int | None = None,
         stop: list[str] | None = None,
         temperature: float | None = None,
     ) -> str:
+        return self.ask_with_metadata(
+            message,
+            max_completion_tokens=max_completion_tokens,
+            max_tokens=max_tokens,
+            stop=stop,
+            temperature=temperature,
+        ).text
+
+    def ask_with_metadata(
+        self,
+        message: str,
+        *,
+        max_completion_tokens: int | None = None,
+        max_tokens: int | None = None,
+        stop: list[str] | None = None,
+        temperature: float | None = None,
+    ) -> ChatResponse:
         self._messages.append({"role": "user", "content": message})
 
         request: dict[str, object] = {
@@ -29,6 +56,8 @@ class ChatSession:
         }
         if max_completion_tokens is not None:
             request["max_completion_tokens"] = max_completion_tokens
+        if max_tokens is not None:
+            request["max_tokens"] = max_tokens
         if stop is not None:
             request["stop"] = stop
         if temperature is not None:
@@ -37,7 +66,7 @@ class ChatSession:
         response = self._chat_completions_api.create(**request)
         answer = _response_text(response)
         self._messages.append({"role": "assistant", "content": answer})
-        return answer
+        return ChatResponse(answer, *_response_usage(response))
 
 
 def _response_text(response: object) -> str:
@@ -55,6 +84,29 @@ def _response_text(response: object) -> str:
         return "".join(_content_part_text(part) for part in content)
 
     return "" if content is None else str(content)
+
+
+def _response_usage(response: object) -> tuple[int | None, int | None, int | None]:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None, None, None
+
+    return (
+        _usage_value(usage, "prompt_tokens"),
+        _usage_value(usage, "completion_tokens"),
+        _usage_value(usage, "total_tokens"),
+    )
+
+
+def _usage_value(usage: object, key: str) -> int | None:
+    if isinstance(usage, dict):
+        value = usage.get(key)
+    else:
+        value = getattr(usage, key, None)
+
+    if isinstance(value, int):
+        return value
+    return None
 
 
 def _content_part_text(part: Any) -> str:
