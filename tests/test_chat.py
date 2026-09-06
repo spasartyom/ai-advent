@@ -17,6 +17,11 @@ class FakeChatCompletionsAPI:
                     message=SimpleNamespace(content=f"answer-{number}"),
                 ),
             ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=20,
+                total_tokens=30,
+            ),
         )
 
 
@@ -97,6 +102,35 @@ class ChatSessionTests(unittest.TestCase):
                 },
             ],
         )
+
+    def test_max_tokens_is_sent_to_api(self) -> None:
+        api = FakeChatCompletionsAPI()
+        session = ChatSession(api, "test-model")
+
+        answer = session.ask("Hello", max_tokens=120)
+
+        self.assertEqual(answer, "answer-1")
+        self.assertEqual(
+            api.requests,
+            [
+                {
+                    "model": "test-model",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "max_tokens": 120,
+                },
+            ],
+        )
+
+    def test_ask_with_metadata_returns_usage(self) -> None:
+        api = FakeChatCompletionsAPI()
+        session = ChatSession(api, "test-model")
+
+        response = session.ask_with_metadata("Hello")
+
+        self.assertEqual(response.text, "answer-1")
+        self.assertEqual(response.prompt_tokens, 10)
+        self.assertEqual(response.completion_tokens, 20)
+        self.assertEqual(response.total_tokens, 30)
 
 if __name__ == "__main__":
     unittest.main()
