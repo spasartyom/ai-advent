@@ -1,0 +1,4 @@
+interface:
+  display_name: "Prepare Conventional Commit"
+  short_description: "Prepare clean Conventional Commit messages"
+  default_prompt: "Use $prepare-conventional-commit to inspect my staged changes and prepare a Conventional Commit."
