@@ -6,6 +6,7 @@ from ai_advent.chat import (
     create_chat_completion,
 )
 from ai_advent.memory import AgentMemory
+from ai_advent.tokens import TokenReport
 
 DEFAULT_SYSTEM_PROMPT = (
     "Ты полезный AI-агент. Отвечай кратко и по делу. "
@@ -20,6 +21,7 @@ class AgentResponse:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
+    token_report: TokenReport | None = None
 
 
 class Agent:
@@ -54,6 +56,7 @@ class Agent:
     ) -> AgentResponse:
         self._messages.append({"role": "user", "content": user_message})
         request_messages = self._build_request_messages()
+
         try:
             response = create_chat_completion(
                 self._chat_completions_api,
@@ -68,11 +71,17 @@ class Agent:
             raise
         self._messages.append({"role": "assistant", "content": response.text})
         self._save_messages()
+        token_report = TokenReport(
+            prompt_tokens=response.prompt_tokens,
+            completion_tokens=response.completion_tokens,
+            total_tokens=response.total_tokens,
+        )
         return AgentResponse(
             text=response.text,
             prompt_tokens=response.prompt_tokens,
             completion_tokens=response.completion_tokens,
             total_tokens=response.total_tokens,
+            token_report=token_report,
         )
 
     def _build_request_messages(self) -> list[Message]:

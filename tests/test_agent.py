@@ -144,6 +144,45 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(response.prompt_tokens, 10)
         self.assertEqual(response.completion_tokens, 20)
         self.assertEqual(response.total_tokens, 30)
+        self.assertIsNotNone(response.token_report)
+        assert response.token_report is not None
+        self.assertEqual(response.token_report.prompt_tokens, 10)
+        self.assertEqual(response.token_report.completion_tokens, 20)
+        self.assertEqual(response.token_report.total_tokens, 30)
+
+    def test_agent_reports_usage_for_each_successful_turn(self) -> None:
+        api = FakeChatCompletionsAPI()
+        agent = Agent(api, "test-model")
+
+        first_response = agent.run_turn("Hello")
+        second_response = agent.run_turn("Again")
+
+        self.assertIsNotNone(first_response.token_report)
+        self.assertIsNotNone(second_response.token_report)
+        assert first_response.token_report is not None
+        assert second_response.token_report is not None
+        self.assertEqual(first_response.token_report.total_tokens, 30)
+        self.assertEqual(second_response.token_report.total_tokens, 30)
+
+    def test_agent_reports_missing_usage_as_none(self) -> None:
+        api = FakeChatCompletionsAPI()
+        agent = Agent(api, "test-model")
+
+        api.create = lambda **kwargs: SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="answer without usage"),
+                ),
+            ],
+            usage=None,
+        )
+        response = agent.run_turn("Hello")
+
+        self.assertIsNotNone(response.token_report)
+        assert response.token_report is not None
+        self.assertIsNone(response.token_report.prompt_tokens)
+        self.assertIsNone(response.token_report.completion_tokens)
+        self.assertIsNone(response.token_report.total_tokens)
 
     def test_agent_saves_messages_to_configured_memory(self) -> None:
         api = FakeChatCompletionsAPI()
