@@ -5,6 +5,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from ai_advent.agent import Agent
+from ai_advent.context import FullContextStrategy, SummaryContextStrategy
 from ai_advent.memory import JsonFileMemory
 from ai_advent.tokens import TokenReport
 
@@ -29,6 +30,8 @@ BASE_URL_ENV = "AI_ADVENT_BASE_URL"
 MODEL_ENV = "AI_ADVENT_MODEL"
 MEMORY_FILE_ENV = "AI_ADVENT_MEMORY_FILE"
 DEFAULT_MEMORY_FILE = ".ai-advent/agent-memory.json"
+DEFAULT_CONTEXT_STRATEGY = "full"
+DEFAULT_KEEP_LAST = 10
 
 
 def run_agent(
@@ -117,6 +120,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="print API token usage after each agent response",
     )
+    agent_parser.add_argument(
+        "--context-strategy",
+        choices=("full", "summary"),
+        default=DEFAULT_CONTEXT_STRATEGY,
+        help="context management strategy",
+    )
+    agent_parser.add_argument(
+        "--keep-last",
+        type=int,
+        default=DEFAULT_KEEP_LAST,
+        help="number of recent messages to keep when using summary strategy",
+    )
 
     return parser.parse_args(argv)
 
@@ -150,10 +165,12 @@ def main() -> None:
         None,
     ) or os.getenv(MEMORY_FILE_ENV, DEFAULT_MEMORY_FILE)
     memory = JsonFileMemory(Path(memory_file))
+    context_strategy = build_context_strategy(args.context_strategy, args.keep_last)
     agent = Agent(
         client.chat.completions,
         model,
         memory=memory,
+        context_strategy=context_strategy,
     )
     if args.command in {None, "agent"}:
         run_agent(
@@ -162,6 +179,17 @@ def main() -> None:
             base_url,
             show_tokens=getattr(args, "show_tokens", False),
         )
+
+
+def build_context_strategy(
+    strategy_name: str,
+    keep_last: int,
+) -> FullContextStrategy | SummaryContextStrategy:
+    if strategy_name == "summary":
+        return SummaryContextStrategy(keep_last)
+
+    return FullContextStrategy()
+
 
 def _format_optional_int(value: int | None) -> str:
     return "n/a" if value is None else str(value)
