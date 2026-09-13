@@ -30,6 +30,7 @@ cp .env.example .env
 AI_ADVENT_API_KEY=sk-your-api-key
 AI_ADVENT_MODEL=gpt-5.6-luna
 AI_ADVENT_BASE_URL=https://api.openai.com/v1
+AI_ADVENT_MEMORY_FILE=.ai-advent/agent-memory.json
 ```
 
 Файл `.env` исключен из Git и не попадет в репозиторий.
@@ -72,3 +73,35 @@ Type /exit or /quit to stop.
 You: What is an agent?
 Assistant: An agent is a program that can use an LLM plus state and logic...
 ```
+
+### День 7: сохранение контекста
+
+Агент сохраняет историю сообщений в JSON-файл и загружает ее при следующем
+запуске. По умолчанию используется файл:
+
+```text
+.ai-advent/agent-memory.json
+```
+
+Запуск с памятью по умолчанию:
+
+```bash
+ai-advent agent
+```
+
+Можно указать отдельный файл памяти:
+
+```bash
+ai-advent agent --memory-file .ai-advent/demo-memory.json
+```
+
+Проверка вручную:
+
+1. Запустите `ai-advent agent`.
+2. Напишите факт, например: `Меня зовут Антон, я изучаю AI-агентов`.
+3. Завершите чат через `/exit`.
+4. Запустите `ai-advent agent` снова.
+5. Спросите: `Что ты помнишь обо мне?`
+
+При втором запуске агент отправит в LLM историю из JSON-файла и продолжит
+диалог с сохраненным контекстом.

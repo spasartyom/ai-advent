@@ -18,6 +18,7 @@ Week 1 is preserved in tags:
 Current branch work starts week 2:
 
 - `w2_d1` / Day 6 - first standalone agent
+- `w2_d2` / Day 7 - JSON-backed persistent context
 
 ## Current Product Shape
 
@@ -39,6 +40,7 @@ come from environment variables, usually loaded from `.env`:
 - `AI_ADVENT_API_KEY`
 - `AI_ADVENT_MODEL`
 - `AI_ADVENT_BASE_URL`
+- `AI_ADVENT_MEMORY_FILE`
 
 Fallback OpenAI-style names are also supported:
 
@@ -70,10 +72,12 @@ Current week 2 core.
 Responsibilities:
 
 - own the in-memory dialog state for the running process;
+- load initial messages from memory when configured;
 - accept a user message through `Agent.run_turn`;
 - prepare the message list for the LLM call;
 - call the low-level chat helper;
 - append the assistant response;
+- save messages after a successful turn when memory is configured;
 - return an `AgentResponse` with response text and usage metadata.
 
 The agent is intentionally a separate entity from the CLI and from the raw API
@@ -96,6 +100,24 @@ Responsibilities:
 This module should remain provider-agnostic and should not know about agent
 memory or context strategy decisions.
 
+### `ai_advent/memory.py`
+
+Persistent memory adapters.
+
+Current implementation:
+
+- `JsonFileMemory` stores messages in a JSON file with the shape
+  `{"messages": [...]}`;
+- missing files load as empty history;
+- invalid message objects raise `ValueError`;
+- parent directories are created automatically on save.
+
+Default CLI memory file:
+
+```text
+.ai-advent/agent-memory.json
+```
+
 ### `tests/`
 
 Tests use fake Chat Completions APIs rather than real network calls.
@@ -104,6 +126,7 @@ Current tests cover:
 
 - `Agent` request/response behavior;
 - in-process dialog history;
+- JSON-backed persistent memory;
 - defensive copying of messages;
 - usage metadata propagation;
 - CLI command parsing and terminal loop behavior;
@@ -122,7 +145,6 @@ tags now.
 
 Expected evolution:
 
-- Day 7: persistent memory, likely JSON first.
 - Day 8: token accounting for current request, history, and model response.
 - Day 9: summary-based context compression.
 - Day 10: multiple context strategies:
@@ -132,7 +154,6 @@ Expected evolution:
 
 Likely future modules:
 
-- `ai_advent/memory.py` - load/save dialog state.
 - `ai_advent/tokens.py` - token estimation and cost reporting.
 - `ai_advent/context.py` - context strategy interfaces and implementations.
 

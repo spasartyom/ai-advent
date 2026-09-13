@@ -1,7 +1,10 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
 from ai_advent.agent import Agent, DEFAULT_SYSTEM_PROMPT
+from ai_advent.memory import JsonFileMemory
 
 
 class FakeChatCompletionsAPI:
@@ -23,6 +26,11 @@ class FakeChatCompletionsAPI:
                 total_tokens=30,
             ),
         )
+
+
+class FailingChatCompletionsAPI:
+    def create(self, **kwargs: object) -> object:
+        raise RuntimeError("API failed")
 
 
 class AgentTests(unittest.TestCase):
@@ -136,6 +144,56 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(response.prompt_tokens, 10)
         self.assertEqual(response.completion_tokens, 20)
         self.assertEqual(response.total_tokens, 30)
+
+    def test_agent_saves_messages_to_configured_memory(self) -> None:
+        api = FakeChatCompletionsAPI()
+
+        with TemporaryDirectory() as directory:
+            memory = JsonFileMemory(Path(directory) / "memory.json")
+            agent = Agent(api, "test-model", memory=memory)
+
+            agent.run_turn("Remember me")
+
+            self.assertEqual(
+                memory.load_messages(),
+                [
+                    {"role": "user", "content": "Remember me"},
+                    {"role": "assistant", "content": "answer-1"},
+                ],
+            )
+
+    def test_agent_loads_messages_from_configured_memory(self) -> None:
+        api = FakeChatCompletionsAPI()
+
+        with TemporaryDirectory() as directory:
+            memory = JsonFileMemory(Path(directory) / "memory.json")
+            memory.save_messages(
+                [
+                    {"role": "user", "content": "My name is Anton"},
+                    {"role": "assistant", "content": "Got it"},
+                ]
+            )
+            agent = Agent(api, "test-model", memory=memory)
+
+            agent.run_turn("What is my name?")
+
+            self.assertEqual(
+                api.requests[0]["messages"],
+                [
+                    {"role": "system", "content": DEFAULT_SYSTEM_PROMPT},
+                    {"role": "user", "content": "My name is Anton"},
+                    {"role": "assistant", "content": "Got it"},
+                    {"role": "user", "content": "What is my name?"},
+                ],
+            )
+
+    def test_agent_rolls_back_user_message_when_api_fails(self) -> None:
+        agent = Agent(FailingChatCompletionsAPI(), "test-model")
+
+        with self.assertRaises(RuntimeError):
+            agent.run_turn("This turn will fail")
+
+        self.assertEqual(agent.messages, [])
 
 
 if __name__ == "__main__":
