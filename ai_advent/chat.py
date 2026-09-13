@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+Message = dict[str, str]
+
 
 class ChatCompletionsAPI(Protocol):
     def create(self, **kwargs: object) -> object: ...
@@ -20,7 +22,7 @@ class ChatSession:
     def __init__(self, chat_completions_api: ChatCompletionsAPI, model: str) -> None:
         self._chat_completions_api = chat_completions_api
         self._model = model
-        self._messages: list[dict[str, str]] = []
+        self._messages: list[Message] = []
 
     def ask(
         self,
@@ -50,23 +52,45 @@ class ChatSession:
     ) -> ChatResponse:
         self._messages.append({"role": "user", "content": message})
 
-        request: dict[str, object] = {
-            "model": self._model,
-            "messages": list(self._messages),
-        }
-        if max_completion_tokens is not None:
-            request["max_completion_tokens"] = max_completion_tokens
-        if max_tokens is not None:
-            request["max_tokens"] = max_tokens
-        if stop is not None:
-            request["stop"] = stop
-        if temperature is not None:
-            request["temperature"] = temperature
-
-        response = self._chat_completions_api.create(**request)
-        answer = _response_text(response)
+        chat_response = create_chat_completion(
+            self._chat_completions_api,
+            self._model,
+            self._messages,
+            max_completion_tokens=max_completion_tokens,
+            max_tokens=max_tokens,
+            stop=stop,
+            temperature=temperature,
+        )
+        answer = chat_response.text
         self._messages.append({"role": "assistant", "content": answer})
-        return ChatResponse(answer, *_response_usage(response))
+        return chat_response
+
+
+def create_chat_completion(
+    chat_completions_api: ChatCompletionsAPI,
+    model: str,
+    messages: list[Message],
+    *,
+    max_completion_tokens: int | None = None,
+    max_tokens: int | None = None,
+    stop: list[str] | None = None,
+    temperature: float | None = None,
+) -> ChatResponse:
+    request: dict[str, object] = {
+        "model": model,
+        "messages": list(messages),
+    }
+    if max_completion_tokens is not None:
+        request["max_completion_tokens"] = max_completion_tokens
+    if max_tokens is not None:
+        request["max_tokens"] = max_tokens
+    if stop is not None:
+        request["stop"] = stop
+    if temperature is not None:
+        request["temperature"] = temperature
+
+    response = chat_completions_api.create(**request)
+    return ChatResponse(_response_text(response), *_response_usage(response))
 
 
 def _response_text(response: object) -> str:
