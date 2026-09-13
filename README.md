@@ -141,3 +141,48 @@ You: /paste
 ...многострочный текст...
 /send
 ```
+
+### День 9: сжатие истории
+
+Агент поддерживает две стратегии контекста:
+
+- `full` - отправляет в модель всю сохраненную историю;
+- `summary` - сжимает старую часть диалога в summary, а последние N сообщений
+  хранит и отправляет как есть.
+
+По умолчанию используется `full`:
+
+```bash
+ai-advent agent --context-strategy full
+```
+
+Запуск с summary-компрессией:
+
+```bash
+ai-advent agent --context-strategy summary --keep-last 10
+```
+
+Для ручного сравнения удобно открыть две вкладки терминала и использовать
+разные файлы памяти:
+
+```bash
+ai-advent agent --show-tokens --context-strategy full --memory-file .ai-advent/full.json
+```
+
+```bash
+ai-advent agent --show-tokens --context-strategy summary --keep-last 10 --memory-file .ai-advent/summary.json
+```
+
+Отправляйте одинаковые сообщения в оба процесса и сравнивайте качество ответов
+и `prompt_tokens`. В summary-режиме JSON-память хранит отдельное поле
+`summary` рядом с последними сообщениями:
+
+```json
+{
+  "summary": "Краткое содержание старой части диалога...",
+  "messages": []
+}
+```
+
+Сжатие делает дополнительный LLM-запрос для обновления summary, когда история
+становится длиннее `--keep-last`.

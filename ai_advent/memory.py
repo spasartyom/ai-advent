@@ -1,14 +1,21 @@
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 from ai_advent.chat import Message
 
 
-class AgentMemory(Protocol):
-    def load_messages(self) -> list[Message]: ...
+@dataclass(frozen=True)
+class AgentMemoryState:
+    messages: list[Message]
+    summary: str = ""
 
-    def save_messages(self, messages: list[Message]) -> None: ...
+
+class AgentMemory(Protocol):
+    def load_state(self) -> AgentMemoryState: ...
+
+    def save_state(self, state: AgentMemoryState) -> None: ...
 
 
 class JsonFileMemory:
@@ -21,9 +28,9 @@ class JsonFileMemory:
     def path(self) -> Path:
         return self._path
 
-    def load_messages(self) -> list[Message]:
+    def load_state(self) -> AgentMemoryState:
         if not self._path.exists():
-            return []
+            return AgentMemoryState(messages=[])
 
         with self._path.open("r", encoding="utf-8") as memory_file:
             data = json.load(memory_file)
@@ -32,15 +39,31 @@ class JsonFileMemory:
         if not isinstance(messages, list):
             raise ValueError("Memory file must contain a messages list.")
 
-        return [_validate_message(message) for message in messages]
+        summary = data.get("summary", "")
+        if not isinstance(summary, str):
+            raise ValueError("Memory file summary must be a string.")
 
-    def save_messages(self, messages: list[Message]) -> None:
+        return AgentMemoryState(
+            messages=[_validate_message(message) for message in messages],
+            summary=summary,
+        )
+
+    def save_state(self, state: AgentMemoryState) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"messages": [message.copy() for message in messages]}
+        payload = {
+            "summary": state.summary,
+            "messages": [message.copy() for message in state.messages],
+        }
 
         with self._path.open("w", encoding="utf-8") as memory_file:
             json.dump(payload, memory_file, ensure_ascii=False, indent=2)
             memory_file.write("\n")
+
+    def load_messages(self) -> list[Message]:
+        return self.load_state().messages
+
+    def save_messages(self, messages: list[Message]) -> None:
+        self.save_state(AgentMemoryState(messages=messages))
 
 
 def _validate_message(message: object) -> Message:

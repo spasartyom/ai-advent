@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from ai_advent.memory import JsonFileMemory
+from ai_advent.memory import AgentMemoryState, JsonFileMemory
 
 
 class JsonFileMemoryTests(unittest.TestCase):
@@ -25,6 +25,38 @@ class JsonFileMemoryTests(unittest.TestCase):
 
             self.assertEqual(memory.load_messages(), messages)
 
+    def test_save_and_load_state_with_summary(self) -> None:
+        with TemporaryDirectory() as directory:
+            memory = JsonFileMemory(Path(directory) / "memory.json")
+            state = AgentMemoryState(
+                summary="Пользователь строит CLI-агента.",
+                messages=[
+                    {"role": "user", "content": "Привет"},
+                    {"role": "assistant", "content": "Короткий ответ"},
+                ],
+            )
+
+            memory.save_state(state)
+
+            self.assertEqual(memory.load_state(), state)
+
+    def test_old_memory_file_without_summary_loads_empty_summary(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "memory.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "messages": [
+                            {"role": "user", "content": "Old memory"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            memory = JsonFileMemory(path)
+
+            self.assertEqual(memory.load_state().summary, "")
+
     def test_load_rejects_invalid_messages_shape(self) -> None:
         with TemporaryDirectory() as directory:
             path = Path(directory) / "memory.json"
@@ -36,6 +68,18 @@ class JsonFileMemoryTests(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 memory.load_messages()
+
+    def test_load_rejects_invalid_summary_shape(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "memory.json"
+            path.write_text(
+                json.dumps({"summary": [], "messages": []}),
+                encoding="utf-8",
+            )
+            memory = JsonFileMemory(path)
+
+            with self.assertRaises(ValueError):
+                memory.load_state()
 
 
 if __name__ == "__main__":

@@ -4,7 +4,8 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
 from ai_advent.agent import Agent, DEFAULT_SYSTEM_PROMPT
-from ai_advent.memory import JsonFileMemory
+from ai_advent.context import SummaryContextStrategy
+from ai_advent.memory import AgentMemoryState, JsonFileMemory
 
 
 class FakeChatCompletionsAPI:
@@ -225,6 +226,61 @@ class AgentTests(unittest.TestCase):
                     {"role": "user", "content": "What is my name?"},
                 ],
             )
+
+    def test_agent_loads_summary_from_configured_memory(self) -> None:
+        api = FakeChatCompletionsAPI()
+
+        with TemporaryDirectory() as directory:
+            memory = JsonFileMemory(Path(directory) / "memory.json")
+            memory.save_state(
+                state=AgentMemoryState(
+                    summary="User name is Anton.",
+                    messages=[{"role": "user", "content": "What do you remember?"}],
+                )
+            )
+            agent = Agent(
+                api,
+                "test-model",
+                memory=memory,
+                context_strategy=SummaryContextStrategy(keep_last=5),
+            )
+
+            agent.run_turn("Continue")
+
+            self.assertIn(
+                "User name is Anton.",
+                api.requests[0]["messages"][1]["content"],
+            )
+
+    def test_agent_compresses_summary_context_after_successful_turn(self) -> None:
+        api = FakeChatCompletionsAPI()
+
+        with TemporaryDirectory() as directory:
+            memory = JsonFileMemory(Path(directory) / "memory.json")
+            agent = Agent(
+                api,
+                "test-model",
+                memory=memory,
+                context_strategy=SummaryContextStrategy(keep_last=2),
+            )
+
+            agent.run_turn("First")
+            agent.run_turn("Second")
+
+            self.assertEqual(agent.summary, "answer-3")
+            self.assertEqual(
+                agent.messages,
+                [
+                    {"role": "user", "content": "Second"},
+                    {"role": "assistant", "content": "answer-2"},
+                ],
+            )
+            self.assertEqual(memory.load_state().summary, "answer-3")
+            self.assertEqual(len(api.requests), 3)
+
+            agent.run_turn("Third")
+
+            self.assertIn("answer-3", api.requests[3]["messages"][1]["content"])
 
     def test_agent_rolls_back_user_message_when_api_fails(self) -> None:
         agent = Agent(FailingChatCompletionsAPI(), "test-model")

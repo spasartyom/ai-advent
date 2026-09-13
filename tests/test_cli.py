@@ -3,7 +3,8 @@ import unittest
 from contextlib import redirect_stdout
 from types import SimpleNamespace
 
-from ai_advent.cli import parse_args, read_paste_block, run_agent
+from ai_advent.cli import build_context_strategy, parse_args, read_paste_block, run_agent
+from ai_advent.context import FullContextStrategy, SummaryContextStrategy
 from ai_advent.tokens import TokenReport
 
 
@@ -32,6 +33,21 @@ class CliTests(unittest.TestCase):
         args = parse_args(["agent", "--show-tokens"])
 
         self.assertTrue(args.show_tokens)
+
+    def test_agent_command_accepts_context_strategy_options(self) -> None:
+        args = parse_args(["agent", "--context-strategy", "summary", "--keep-last", "4"])
+
+        self.assertEqual(args.context_strategy, "summary")
+        self.assertEqual(args.keep_last, 4)
+
+    def test_build_context_strategy_returns_full_strategy(self) -> None:
+        self.assertIsInstance(build_context_strategy("full", 10), FullContextStrategy)
+
+    def test_build_context_strategy_returns_summary_strategy(self) -> None:
+        self.assertIsInstance(
+            build_context_strategy("summary", 10),
+            SummaryContextStrategy,
+        )
 
     def test_run_agent_reads_user_messages_until_exit(self) -> None:
         agent = FakeAgent()
