@@ -19,6 +19,7 @@ Current branch work starts week 2:
 
 - `w2_d1` / Day 6 - first standalone agent
 - `w2_d2` / Day 7 - JSON-backed persistent context
+- `w2_d3` / Day 8 - API usage token reporting
 
 ## Current Product Shape
 
@@ -60,7 +61,8 @@ Responsibilities:
 - load environment variables;
 - create the OpenAI-compatible client;
 - create `Agent`;
-- run the interactive terminal loop.
+- run the interactive terminal loop;
+- support `/paste` and `/send` for multiline user messages.
 
 This file should stay thin. Avoid putting agent logic, memory logic, token
 accounting, or context strategies here.
@@ -78,7 +80,8 @@ Responsibilities:
 - call the low-level chat helper;
 - append the assistant response;
 - save messages after a successful turn when memory is configured;
-- return an `AgentResponse` with response text and usage metadata.
+- return an `AgentResponse` with response text, API usage metadata, and
+  `TokenReport`.
 
 The agent is intentionally a separate entity from the CLI and from the raw API
 client. Future week 2 tasks should evolve this layer rather than rebuilding the
@@ -118,6 +121,19 @@ Default CLI memory file:
 .ai-advent/agent-memory.json
 ```
 
+### `ai_advent/tokens.py`
+
+Token report types.
+
+Current implementation does not estimate tokens locally and does not calculate
+cost. It reports usage values returned by the model API.
+
+Responsibilities:
+
+- define `TokenReport`;
+- carry `prompt_tokens`, `completion_tokens`, and `total_tokens` returned by
+  the API.
+
 ### `tests/`
 
 Tests use fake Chat Completions APIs rather than real network calls.
@@ -127,6 +143,8 @@ Current tests cover:
 - `Agent` request/response behavior;
 - in-process dialog history;
 - JSON-backed persistent memory;
+- API usage token reporting;
+- multiline CLI paste mode;
 - defensive copying of messages;
 - usage metadata propagation;
 - CLI command parsing and terminal loop behavior;
@@ -145,7 +163,6 @@ tags now.
 
 Expected evolution:
 
-- Day 8: token accounting for current request, history, and model response.
 - Day 9: summary-based context compression.
 - Day 10: multiple context strategies:
   - sliding window;
@@ -154,7 +171,6 @@ Expected evolution:
 
 Likely future modules:
 
-- `ai_advent/tokens.py` - token estimation and cost reporting.
 - `ai_advent/context.py` - context strategy interfaces and implementations.
 
 Preferred design:
