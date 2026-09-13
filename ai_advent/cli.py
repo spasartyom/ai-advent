@@ -2,8 +2,10 @@ import argparse
 import os
 import sys
 from collections.abc import Callable
+from pathlib import Path
 
 from ai_advent.agent import Agent
+from ai_advent.memory import JsonFileMemory
 
 try:
     from dotenv import load_dotenv
@@ -22,6 +24,8 @@ EXIT_COMMANDS = {"/exit", "/quit"}
 API_KEY_ENV = "AI_ADVENT_API_KEY"
 BASE_URL_ENV = "AI_ADVENT_BASE_URL"
 MODEL_ENV = "AI_ADVENT_MODEL"
+MEMORY_FILE_ENV = "AI_ADVENT_MEMORY_FILE"
+DEFAULT_MEMORY_FILE = ".ai-advent/agent-memory.json"
 
 
 def run_agent(
@@ -62,9 +66,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="AI Advent CLI")
     subparsers = parser.add_subparsers(dest="command")
 
-    subparsers.add_parser(
+    agent_parser = subparsers.add_parser(
         "agent",
         help="run the week 2 AI agent",
+    )
+    agent_parser.add_argument(
+        "--memory-file",
+        default=None,
+        help="JSON file used to persist agent messages",
     )
 
     return parser.parse_args(argv)
@@ -93,7 +102,13 @@ def main() -> None:
     base_url = os.getenv(BASE_URL_ENV) or os.getenv("OPENAI_BASE_URL")
 
     client = OpenAI(api_key=api_key, base_url=base_url)
-    agent = Agent(client.chat.completions, model)
+    memory_file = getattr(
+        args,
+        "memory_file",
+        None,
+    ) or os.getenv(MEMORY_FILE_ENV, DEFAULT_MEMORY_FILE)
+    memory = JsonFileMemory(Path(memory_file))
+    agent = Agent(client.chat.completions, model, memory=memory)
     if args.command in {None, "agent"}:
         run_agent(agent, model, base_url)
 

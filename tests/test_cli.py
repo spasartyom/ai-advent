@@ -20,6 +20,12 @@ class CliTests(unittest.TestCase):
         args = parse_args(["agent"])
 
         self.assertEqual(args.command, "agent")
+        self.assertIsNone(args.memory_file)
+
+    def test_agent_command_accepts_memory_file(self) -> None:
+        args = parse_args(["agent", "--memory-file", "custom-memory.json"])
+
+        self.assertEqual(args.memory_file, "custom-memory.json")
 
     def test_run_agent_reads_user_messages_until_exit(self) -> None:
         agent = FakeAgent()
