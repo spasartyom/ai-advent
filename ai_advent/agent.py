@@ -37,6 +37,8 @@ class Agent:
         context_strategy: ContextStrategy | None = None,
         messages: list[Message] | None = None,
         summary: str = "",
+        facts: dict[str, str] | None = None,
+        branch: str | None = None,
     ) -> None:
         self._chat_completions_api = chat_completions_api
         self._model = model
@@ -49,9 +51,19 @@ class Agent:
             memory_state = AgentMemoryState(
                 messages=messages,
                 summary=summary,
+                facts=facts or {},
+                current_branch=branch or "main",
             )
-        self._messages = _copy_messages(memory_state.messages)
+        self._branches = _copy_message_map(memory_state.branches or {})
+        self._checkpoints = _copy_message_map(memory_state.checkpoints or {})
+        self._current_branch = branch or memory_state.current_branch
+        if self._current_branch not in self._branches:
+            self._branches[self._current_branch] = _copy_messages(
+                memory_state.messages
+            )
+        self._messages = _copy_messages(self._branches[self._current_branch])
         self._summary = memory_state.summary
+        self._facts = dict(memory_state.facts or {})
 
     @property
     def messages(self) -> list[Message]:
@@ -60,6 +72,14 @@ class Agent:
     @property
     def summary(self) -> str:
         return self._summary
+
+    @property
+    def facts(self) -> dict[str, str]:
+        return dict(self._facts)
+
+    @property
+    def current_branch(self) -> str:
+        return self._current_branch
 
     def run_turn(
         self,
@@ -105,6 +125,7 @@ class Agent:
             ContextState(
                 messages=self._messages,
                 summary=self._summary,
+                facts=self._facts,
             )
         )
         if not self._system_prompt:
@@ -120,6 +141,7 @@ class Agent:
             ContextState(
                 messages=self._messages,
                 summary=self._summary,
+                facts=self._facts,
             ),
             self._chat_completions_api,
             self._model,
@@ -127,6 +149,8 @@ class Agent:
         if result.changed:
             self._messages = _copy_messages(result.state.messages)
             self._summary = result.state.summary
+            self._facts = dict(result.state.facts or {})
+        self._branches[self._current_branch] = _copy_messages(self._messages)
 
     def _save_messages(self) -> None:
         if self._memory is not None:
@@ -134,12 +158,61 @@ class Agent:
                 AgentMemoryState(
                     messages=self._messages,
                     summary=self._summary,
+                    facts=self._facts,
+                    branches=self._branches,
+                    checkpoints=self._checkpoints,
+                    current_branch=self._current_branch,
                 )
             )
+
+    def save_checkpoint(self, name: str) -> None:
+        _validate_name(name, "checkpoint")
+        self._checkpoints[name] = _copy_messages(self._messages)
+        self._save_messages()
+
+    def create_branch(self, name: str, checkpoint: str | None = None) -> None:
+        _validate_name(name, "branch")
+        if name in self._branches:
+            raise ValueError(f"Branch already exists: {name}")
+        if checkpoint is None:
+            messages = self._messages
+        else:
+            if checkpoint not in self._checkpoints:
+                raise ValueError(f"Unknown checkpoint: {checkpoint}")
+            messages = self._checkpoints[checkpoint]
+
+        self._branches[name] = _copy_messages(messages)
+        self.switch_branch(name)
+
+    def switch_branch(self, name: str) -> None:
+        if name not in self._branches:
+            raise ValueError(f"Unknown branch: {name}")
+        self._branches[self._current_branch] = _copy_messages(self._messages)
+        self._current_branch = name
+        self._messages = _copy_messages(self._branches[name])
+        self._save_messages()
+
+    def list_branches(self) -> list[str]:
+        return sorted(self._branches)
+
+    def list_checkpoints(self) -> list[str]:
+        return sorted(self._checkpoints)
 
 
 def _copy_messages(messages: list[Message]) -> list[Message]:
     return [message.copy() for message in messages]
+
+
+def _copy_message_map(value: dict[str, list[Message]]) -> dict[str, list[Message]]:
+    return {
+        key: _copy_messages(messages)
+        for key, messages in value.items()
+    }
+
+
+def _validate_name(name: str, label: str) -> None:
+    if not name or any(character.isspace() for character in name):
+        raise ValueError(f"{label} name must be non-empty and contain no spaces.")
 
 
 def _load_memory(memory: AgentMemory | None) -> AgentMemoryState:

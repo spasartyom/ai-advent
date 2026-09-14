@@ -4,8 +4,11 @@ from types import SimpleNamespace
 from ai_advent.context import (
     ContextState,
     FullContextStrategy,
+    SlidingWindowContextStrategy,
+    StickyFactsContextStrategy,
     SummaryContextStrategy,
     summarize_messages,
+    update_facts,
 )
 
 
@@ -19,6 +22,23 @@ class FakeChatCompletionsAPI:
             choices=[
                 SimpleNamespace(
                     message=SimpleNamespace(content="updated summary"),
+                ),
+            ],
+            usage=None,
+        )
+
+
+class FakeFactsChatCompletionsAPI:
+    def __init__(self, content: str = '{"goal": "build agent"}') -> None:
+        self.requests: list[dict[str, object]] = []
+        self._content = content
+
+    def create(self, **kwargs: object) -> object:
+        self.requests.append(kwargs)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=self._content),
                 ),
             ],
             usage=None,
@@ -94,6 +114,77 @@ class ContextStrategyTests(unittest.TestCase):
     def test_summary_strategy_rejects_invalid_keep_last(self) -> None:
         with self.assertRaises(ValueError):
             SummaryContextStrategy(keep_last=0)
+
+    def test_sliding_window_strategy_keeps_last_messages(self) -> None:
+        strategy = SlidingWindowContextStrategy(keep_last=2)
+        state = ContextState(
+            messages=[
+                {"role": "user", "content": "one"},
+                {"role": "assistant", "content": "two"},
+                {"role": "user", "content": "three"},
+            ],
+        )
+
+        result = strategy.compress(state, FakeChatCompletionsAPI(), "test-model")
+
+        self.assertTrue(result.changed)
+        self.assertEqual(
+            result.state.messages,
+            [
+                {"role": "assistant", "content": "two"},
+                {"role": "user", "content": "three"},
+            ],
+        )
+        self.assertEqual(strategy.build_messages(state), result.state.messages)
+
+    def test_sticky_facts_strategy_sends_facts_and_recent_messages(self) -> None:
+        strategy = StickyFactsContextStrategy(keep_last=1)
+        state = ContextState(
+            facts={"goal": "build agent"},
+            messages=[
+                {"role": "user", "content": "old"},
+                {"role": "assistant", "content": "recent"},
+            ],
+        )
+
+        messages = strategy.build_messages(state)
+
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertIn("goal: build agent", messages[0]["content"])
+        self.assertEqual(messages[1:], [{"role": "assistant", "content": "recent"}])
+
+    def test_sticky_facts_strategy_updates_facts_and_keeps_recent_messages(self) -> None:
+        api = FakeFactsChatCompletionsAPI()
+        strategy = StickyFactsContextStrategy(keep_last=1)
+        state = ContextState(
+            facts={},
+            messages=[
+                {"role": "user", "content": "My goal is building an agent."},
+                {"role": "assistant", "content": "Got it."},
+            ],
+        )
+
+        result = strategy.compress(state, api, "test-model")
+
+        self.assertTrue(result.changed)
+        self.assertEqual(result.state.facts, {"goal": "build agent"})
+        self.assertEqual(
+            result.state.messages,
+            [{"role": "assistant", "content": "Got it."}],
+        )
+        self.assertIn("My goal", api.requests[0]["messages"][1]["content"])
+
+    def test_update_facts_falls_back_when_model_returns_invalid_json(self) -> None:
+        api = FakeFactsChatCompletionsAPI("not json")
+
+        facts = update_facts(
+            api,
+            "test-model",
+            {"goal": "existing"},
+            [{"role": "user", "content": "hello"}],
+        )
+
+        self.assertEqual(facts, {"goal": "existing"})
 
     def test_summarize_messages_returns_stripped_response_text(self) -> None:
         api = FakeChatCompletionsAPI()

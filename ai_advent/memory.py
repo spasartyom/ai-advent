@@ -10,6 +10,10 @@ from ai_advent.chat import Message
 class AgentMemoryState:
     messages: list[Message]
     summary: str = ""
+    facts: dict[str, str] | None = None
+    branches: dict[str, list[Message]] | None = None
+    checkpoints: dict[str, list[Message]] | None = None
+    current_branch: str = "main"
 
 
 class AgentMemory(Protocol):
@@ -43,16 +47,40 @@ class JsonFileMemory:
         if not isinstance(summary, str):
             raise ValueError("Memory file summary must be a string.")
 
+        facts = data.get("facts", {})
+        if not isinstance(facts, dict):
+            raise ValueError("Memory file facts must be an object.")
+
+        branches = data.get("branches", {})
+        if not isinstance(branches, dict):
+            raise ValueError("Memory file branches must be an object.")
+
+        checkpoints = data.get("checkpoints", {})
+        if not isinstance(checkpoints, dict):
+            raise ValueError("Memory file checkpoints must be an object.")
+
+        current_branch = data.get("current_branch", "main")
+        if not isinstance(current_branch, str):
+            raise ValueError("Memory file current_branch must be a string.")
+
         return AgentMemoryState(
             messages=[_validate_message(message) for message in messages],
             summary=summary,
+            facts=_validate_facts(facts),
+            branches=_validate_message_map(branches, "branch"),
+            checkpoints=_validate_message_map(checkpoints, "checkpoint"),
+            current_branch=current_branch,
         )
 
     def save_state(self, state: AgentMemoryState) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "summary": state.summary,
+            "facts": dict(state.facts or {}),
             "messages": [message.copy() for message in state.messages],
+            "branches": _copy_message_map(state.branches or {}),
+            "checkpoints": _copy_message_map(state.checkpoints or {}),
+            "current_branch": state.current_branch,
         }
 
         with self._path.open("w", encoding="utf-8") as memory_file:
@@ -76,3 +104,33 @@ def _validate_message(message: object) -> Message:
         raise ValueError("Each memory message must contain role and content strings.")
 
     return {"role": role, "content": content}
+
+
+def _validate_facts(facts: dict[object, object]) -> dict[str, str]:
+    validated: dict[str, str] = {}
+    for key, value in facts.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise ValueError("Memory file facts must contain string keys and values.")
+        validated[key] = value
+    return validated
+
+
+def _validate_message_map(
+    value: dict[object, object],
+    label: str,
+) -> dict[str, list[Message]]:
+    validated: dict[str, list[Message]] = {}
+    for key, messages in value.items():
+        if not isinstance(key, str) or not isinstance(messages, list):
+            raise ValueError(f"Each memory {label} must contain a messages list.")
+        validated[key] = [_validate_message(message) for message in messages]
+    return validated
+
+
+def _copy_message_map(
+    value: dict[str, list[Message]],
+) -> dict[str, list[Message]]:
+    return {
+        key: [message.copy() for message in messages]
+        for key, messages in value.items()
+    }

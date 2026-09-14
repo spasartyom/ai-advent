@@ -186,3 +186,61 @@ ai-advent agent --show-tokens --context-strategy summary --keep-last 10 --memory
 
 Сжатие делает дополнительный LLM-запрос для обновления summary, когда история
 становится длиннее `--keep-last`.
+
+### День 10: стратегии без summary
+
+Агент поддерживает три дополнительные стратегии управления контекстом:
+
+- `sliding-window` - хранит и отправляет только последние N сообщений;
+- `facts` - обновляет key-value facts и отправляет facts + последние N сообщений;
+- `branch` - позволяет создавать checkpoints и независимые ветки диалога.
+
+Sliding Window:
+
+```bash
+ai-advent agent --show-tokens --context-strategy sliding-window --keep-last 10 --memory-file .ai-advent/sliding.json
+```
+
+Sticky Facts:
+
+```bash
+ai-advent agent --show-tokens --context-strategy facts --keep-last 10 --memory-file .ai-advent/facts.json
+```
+
+Branching:
+
+```bash
+ai-advent agent --show-tokens --context-strategy branch --memory-file .ai-advent/branching.json
+```
+
+Команды для веток внутри чата:
+
+```text
+/checkpoint base
+/branch create option_a base
+/branch create option_b base
+/branch switch option_a
+/branch switch option_b
+/branch list
+/branch checkpoints
+```
+
+Что делают команды:
+
+- `/checkpoint NAME` - сохраняет текущую историю активной ветки как checkpoint.
+- `/branch create NAME` - создает новую ветку из текущего состояния диалога и
+  сразу переключается на нее.
+- `/branch create NAME CHECKPOINT` - создает новую ветку из указанного
+  checkpoint и сразу переключается на нее.
+- `/branch switch NAME` - переключает активную ветку; дальнейшие сообщения
+  будут продолжать выбранную ветку.
+- `/branch list` - показывает список веток и текущую активную ветку.
+- `/branch checkpoints` - показывает список сохраненных checkpoints.
+
+Для ручного сравнения запустите стратегии в разных терминалах, отправляйте один
+и тот же сценарий на 10-15 сообщений и сравнивайте:
+
+- качество финального ответа;
+- стабильность важных деталей;
+- `prompt_tokens`;
+- удобство работы.
