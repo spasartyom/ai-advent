@@ -21,6 +21,7 @@ Current branch work starts week 2:
 - `w2_d2` / Day 7 - JSON-backed persistent context
 - `w2_d3` / Day 8 - API usage token reporting
 - `w2_d4` / Day 9 - summary-based context compression
+- `w2_d5` / Day 10 - sliding window, sticky facts, and branching strategies
 
 ## Current Product Shape
 
@@ -64,7 +65,9 @@ Responsibilities:
 - create `Agent`;
 - run the interactive terminal loop;
 - support `/paste` and `/send` for multiline user messages.
-- expose `--context-strategy full|summary` and `--keep-last`.
+- expose `--context-strategy full|summary|sliding-window|facts|branch`,
+  `--keep-last`, and `--branch`;
+- support `/checkpoint` and `/branch ...` commands for branching experiments.
 
 This file should stay thin. Avoid putting agent logic, memory logic, token
 accounting, or context strategies here.
@@ -78,12 +81,14 @@ Responsibilities:
 - own the in-memory dialog state for the running process;
 - load initial messages from memory when configured;
 - load summary from memory when configured;
+- load facts, branches, and checkpoints from memory when configured;
 - accept a user message through `Agent.run_turn`;
 - prepare the message list through the selected context strategy;
 - call the low-level chat helper;
 - append the assistant response;
 - compress old context when the selected strategy requires it;
 - save messages after a successful turn when memory is configured;
+- manage branch checkpoints and branch switching through methods on `Agent`;
 - return an `AgentResponse` with response text, API usage metadata, and
   `TokenReport`.
 
@@ -114,9 +119,11 @@ Persistent memory adapters.
 Current implementation:
 
 - `JsonFileMemory` stores messages in a JSON file with the shape
-  `{"summary": "...", "messages": [...]}`;
+  `{"summary": "...", "facts": {...}, "messages": [...], "branches": {...},
+  "checkpoints": {...}, "current_branch": "main"}`;
 - missing files load as empty history;
 - old files without `summary` load with an empty summary;
+- old files without facts/branches/checkpoints load empty values;
 - invalid message objects raise `ValueError`;
 - parent directories are created automatically on save.
 
@@ -148,6 +155,10 @@ Current implementations:
 - `FullContextStrategy` sends all active messages.
 - `SummaryContextStrategy` prepends a summary message and keeps only the latest
   N messages as raw chat history.
+- `SlidingWindowContextStrategy` keeps only the latest N messages and discards
+  older raw messages.
+- `StickyFactsContextStrategy` updates a key-value facts block with an
+  additional Chat Completions request and sends facts + latest N messages.
 
 Summary compression uses an additional Chat Completions request to update the
 stored summary from older messages. The main CLI token report shows the usage of
@@ -164,6 +175,7 @@ Current tests cover:
 - JSON-backed persistent memory;
 - API usage token reporting;
 - full and summary context strategies;
+- sliding window, sticky facts, and branching context workflows;
 - multiline CLI paste mode;
 - defensive copying of messages;
 - usage metadata propagation;
@@ -183,10 +195,7 @@ tags now.
 
 Expected evolution:
 
-- Day 10: multiple context strategies:
-  - sliding window;
-  - sticky facts / key-value memory;
-  - branching dialog history.
+- Extend comparison notes from manual Day 10 experiments.
 
 Likely future modules:
 

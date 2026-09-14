@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
 from ai_advent.agent import Agent, DEFAULT_SYSTEM_PROMPT
-from ai_advent.context import SummaryContextStrategy
+from ai_advent.context import StickyFactsContextStrategy, SummaryContextStrategy
 from ai_advent.memory import AgentMemoryState, JsonFileMemory
 
 
@@ -281,6 +281,73 @@ class AgentTests(unittest.TestCase):
             agent.run_turn("Third")
 
             self.assertIn("answer-3", api.requests[3]["messages"][1]["content"])
+
+    def test_agent_updates_facts_context_after_successful_turn(self) -> None:
+        class FactsApi(FakeChatCompletionsAPI):
+            def create(self, **kwargs: object) -> object:
+                self.requests.append(kwargs)
+                number = len(self.requests)
+                if number == 2:
+                    content = '{"goal": "build agent"}'
+                else:
+                    content = f"answer-{number}"
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(content=content),
+                        ),
+                    ],
+                    usage=SimpleNamespace(
+                        prompt_tokens=10,
+                        completion_tokens=20,
+                        total_tokens=30,
+                    ),
+                )
+
+        api = FactsApi()
+        agent = Agent(
+            api,
+            "test-model",
+            context_strategy=StickyFactsContextStrategy(keep_last=2),
+        )
+
+        agent.run_turn("My goal is building an agent.")
+
+        self.assertEqual(agent.facts, {"goal": "build agent"})
+
+    def test_agent_creates_and_switches_branches_from_checkpoint(self) -> None:
+        api = FakeChatCompletionsAPI()
+        agent = Agent(api, "test-model")
+
+        agent.run_turn("Base")
+        agent.save_checkpoint("base")
+        agent.create_branch("option_a", "base")
+        agent.run_turn("A")
+        agent.switch_branch("main")
+        agent.create_branch("option_b", "base")
+        agent.run_turn("B")
+
+        self.assertEqual(agent.current_branch, "option_b")
+        self.assertIn("main", agent.list_branches())
+        self.assertIn("option_a", agent.list_branches())
+        self.assertIn("option_b", agent.list_branches())
+        self.assertEqual(
+            agent.messages[-2:],
+            [
+                {"role": "user", "content": "B"},
+                {"role": "assistant", "content": "answer-3"},
+            ],
+        )
+
+        agent.switch_branch("option_a")
+
+        self.assertEqual(
+            agent.messages[-2:],
+            [
+                {"role": "user", "content": "A"},
+                {"role": "assistant", "content": "answer-2"},
+            ],
+        )
 
     def test_agent_rolls_back_user_message_when_api_fails(self) -> None:
         agent = Agent(FailingChatCompletionsAPI(), "test-model")

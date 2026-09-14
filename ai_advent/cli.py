@@ -5,7 +5,12 @@ from collections.abc import Callable
 from pathlib import Path
 
 from ai_advent.agent import Agent
-from ai_advent.context import FullContextStrategy, SummaryContextStrategy
+from ai_advent.context import (
+    FullContextStrategy,
+    SlidingWindowContextStrategy,
+    StickyFactsContextStrategy,
+    SummaryContextStrategy,
+)
 from ai_advent.memory import JsonFileMemory
 from ai_advent.tokens import TokenReport
 
@@ -64,6 +69,9 @@ def run_agent(
                 print("Bye!")
                 return
 
+        if handle_branch_command(agent, message):
+            continue
+
         if not message:
             continue
 
@@ -76,6 +84,67 @@ def run_agent(
         print(f"Assistant: {response.text}\n")
         if show_tokens and response.token_report is not None:
             print_token_report(response.token_report)
+
+
+def handle_branch_command(agent: Agent, message: str) -> bool:
+    parts = message.split()
+    if not parts:
+        return False
+
+    command = parts[0].lower()
+    try:
+        if command == "/checkpoint":
+            if len(parts) != 2:
+                print("Usage: /checkpoint NAME")
+                return True
+            agent.save_checkpoint(parts[1])
+            print(f"Checkpoint saved: {parts[1]}")
+            return True
+
+        if command == "/branch":
+            return handle_branch_subcommand(agent, parts[1:])
+    except ValueError as error:
+        print(f"Branch error: {error}", file=sys.stderr)
+        return True
+
+    return False
+
+
+def handle_branch_subcommand(agent: Agent, args: list[str]) -> bool:
+    if not args:
+        print("Usage: /branch list | create NAME [CHECKPOINT] | switch NAME | checkpoints")
+        return True
+
+    subcommand = args[0].lower()
+    if subcommand == "list":
+        print(f"Branches: {', '.join(agent.list_branches())}")
+        print(f"Current branch: {agent.current_branch}")
+        return True
+
+    if subcommand == "checkpoints":
+        checkpoints = agent.list_checkpoints()
+        print(f"Checkpoints: {', '.join(checkpoints) if checkpoints else '(none)'}")
+        return True
+
+    if subcommand == "create":
+        if len(args) not in {2, 3}:
+            print("Usage: /branch create NAME [CHECKPOINT]")
+            return True
+        checkpoint = args[2] if len(args) == 3 else None
+        agent.create_branch(args[1], checkpoint)
+        print(f"Branch created and selected: {args[1]}")
+        return True
+
+    if subcommand == "switch":
+        if len(args) != 2:
+            print("Usage: /branch switch NAME")
+            return True
+        agent.switch_branch(args[1])
+        print(f"Switched to branch: {args[1]}")
+        return True
+
+    print("Usage: /branch list | create NAME [CHECKPOINT] | switch NAME | checkpoints")
+    return True
 
 
 def read_paste_block(read_input: Callable[[str], str]) -> str | None:
@@ -122,7 +191,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     agent_parser.add_argument(
         "--context-strategy",
-        choices=("full", "summary"),
+        choices=("full", "summary", "sliding-window", "facts", "branch"),
         default=DEFAULT_CONTEXT_STRATEGY,
         help="context management strategy",
     )
@@ -130,7 +199,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--keep-last",
         type=int,
         default=DEFAULT_KEEP_LAST,
-        help="number of recent messages to keep when using summary strategy",
+        help="number of recent messages to keep in compact context strategies",
+    )
+    agent_parser.add_argument(
+        "--branch",
+        default=None,
+        help="initial branch name for branch context experiments",
     )
 
     return parser.parse_args(argv)
@@ -171,6 +245,7 @@ def main() -> None:
         model,
         memory=memory,
         context_strategy=context_strategy,
+        branch=args.branch,
     )
     if args.command in {None, "agent"}:
         run_agent(
@@ -184,9 +259,18 @@ def main() -> None:
 def build_context_strategy(
     strategy_name: str,
     keep_last: int,
-) -> FullContextStrategy | SummaryContextStrategy:
+) -> (
+    FullContextStrategy
+    | SummaryContextStrategy
+    | SlidingWindowContextStrategy
+    | StickyFactsContextStrategy
+):
     if strategy_name == "summary":
         return SummaryContextStrategy(keep_last)
+    if strategy_name == "sliding-window":
+        return SlidingWindowContextStrategy(keep_last)
+    if strategy_name == "facts":
+        return StickyFactsContextStrategy(keep_last)
 
     return FullContextStrategy()
 

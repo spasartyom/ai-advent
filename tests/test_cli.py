@@ -3,8 +3,19 @@ import unittest
 from contextlib import redirect_stdout
 from types import SimpleNamespace
 
-from ai_advent.cli import build_context_strategy, parse_args, read_paste_block, run_agent
-from ai_advent.context import FullContextStrategy, SummaryContextStrategy
+from ai_advent.cli import (
+    build_context_strategy,
+    handle_branch_command,
+    parse_args,
+    read_paste_block,
+    run_agent,
+)
+from ai_advent.context import (
+    FullContextStrategy,
+    SlidingWindowContextStrategy,
+    StickyFactsContextStrategy,
+    SummaryContextStrategy,
+)
 from ai_advent.tokens import TokenReport
 
 
@@ -35,10 +46,21 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.show_tokens)
 
     def test_agent_command_accepts_context_strategy_options(self) -> None:
-        args = parse_args(["agent", "--context-strategy", "summary", "--keep-last", "4"])
+        args = parse_args(
+            [
+                "agent",
+                "--context-strategy",
+                "summary",
+                "--keep-last",
+                "4",
+                "--branch",
+                "option_a",
+            ]
+        )
 
         self.assertEqual(args.context_strategy, "summary")
         self.assertEqual(args.keep_last, 4)
+        self.assertEqual(args.branch, "option_a")
 
     def test_build_context_strategy_returns_full_strategy(self) -> None:
         self.assertIsInstance(build_context_strategy("full", 10), FullContextStrategy)
@@ -48,6 +70,38 @@ class CliTests(unittest.TestCase):
             build_context_strategy("summary", 10),
             SummaryContextStrategy,
         )
+
+    def test_build_context_strategy_returns_sliding_window_strategy(self) -> None:
+        self.assertIsInstance(
+            build_context_strategy("sliding-window", 10),
+            SlidingWindowContextStrategy,
+        )
+
+    def test_build_context_strategy_returns_facts_strategy(self) -> None:
+        self.assertIsInstance(
+            build_context_strategy("facts", 10),
+            StickyFactsContextStrategy,
+        )
+
+    def test_branch_command_creates_checkpoint(self) -> None:
+        class BranchAgent(FakeAgent):
+            current_branch = "main"
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.checkpoints: list[str] = []
+
+            def save_checkpoint(self, name: str) -> None:
+                self.checkpoints.append(name)
+
+        agent = BranchAgent()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            handled = handle_branch_command(agent, "/checkpoint base")
+
+        self.assertTrue(handled)
+        self.assertEqual(agent.checkpoints, ["base"])
 
     def test_run_agent_reads_user_messages_until_exit(self) -> None:
         agent = FakeAgent()
