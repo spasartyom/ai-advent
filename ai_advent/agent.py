@@ -38,6 +38,8 @@ class Agent:
         messages: list[Message] | None = None,
         summary: str = "",
         facts: dict[str, str] | None = None,
+        working_memory: dict[str, str] | None = None,
+        long_term_memory: dict[str, str] | None = None,
         branch: str | None = None,
     ) -> None:
         self._chat_completions_api = chat_completions_api
@@ -47,11 +49,18 @@ class Agent:
         self._context_strategy = context_strategy or FullContextStrategy()
         if messages is None:
             memory_state = _load_memory(memory)
+            memory_state = _with_memory_layer_overrides(
+                memory_state,
+                working_memory=working_memory,
+                long_term_memory=long_term_memory,
+            )
         else:
             memory_state = AgentMemoryState(
                 messages=messages,
                 summary=summary,
                 facts=facts or {},
+                working_memory=working_memory or {},
+                long_term_memory=long_term_memory or {},
                 current_branch=branch or "main",
             )
         self._branches = _copy_message_map(memory_state.branches or {})
@@ -64,6 +73,8 @@ class Agent:
         self._messages = _copy_messages(self._branches[self._current_branch])
         self._summary = memory_state.summary
         self._facts = dict(memory_state.facts or {})
+        self._working_memory = dict(memory_state.working_memory or {})
+        self._long_term_memory = dict(memory_state.long_term_memory or {})
 
     @property
     def messages(self) -> list[Message]:
@@ -78,8 +89,32 @@ class Agent:
         return dict(self._facts)
 
     @property
+    def working_memory(self) -> dict[str, str]:
+        return dict(self._working_memory)
+
+    @property
+    def long_term_memory(self) -> dict[str, str]:
+        return dict(self._long_term_memory)
+
+    @property
     def current_branch(self) -> str:
         return self._current_branch
+
+    def remember_working(self, key: str, value: str) -> None:
+        self._working_memory[_validate_memory_key(key)] = value
+        self._save_messages()
+
+    def remember_long_term(self, key: str, value: str) -> None:
+        self._long_term_memory[_validate_memory_key(key)] = value
+        self._save_messages()
+
+    def forget_working(self, key: str) -> None:
+        self._working_memory.pop(key, None)
+        self._save_messages()
+
+    def forget_long_term(self, key: str) -> None:
+        self._long_term_memory.pop(key, None)
+        self._save_messages()
 
     def run_turn(
         self,
@@ -128,12 +163,41 @@ class Agent:
                 facts=self._facts,
             )
         )
+        memory_messages = self._build_memory_messages()
         if not self._system_prompt:
-            return context_messages
+            return [*memory_messages, *context_messages]
 
         return [
             {"role": "system", "content": self._system_prompt},
+            *memory_messages,
             *context_messages,
+        ]
+
+    def _build_memory_messages(self) -> list[Message]:
+        sections = []
+        if self._working_memory:
+            sections.append(
+                "Рабочая память текущей учебной задачи:\n"
+                + _format_memory_map(self._working_memory)
+            )
+        if self._long_term_memory:
+            sections.append(
+                "Долговременная память пользователя и ассистента:\n"
+                + _format_memory_map(self._long_term_memory)
+            )
+        if not sections:
+            return []
+
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "Явные слои памяти Study Coach Agent. "
+                    "Учитывай эти данные в ответе, но не смешивай их с текущим "
+                    "диалогом:\n\n"
+                    + "\n\n".join(sections)
+                ),
+            }
         ]
 
     def _compress_context(self) -> None:
@@ -159,6 +223,8 @@ class Agent:
                     messages=self._messages,
                     summary=self._summary,
                     facts=self._facts,
+                    working_memory=self._working_memory,
+                    long_term_memory=self._long_term_memory,
                     branches=self._branches,
                     checkpoints=self._checkpoints,
                     current_branch=self._current_branch,
@@ -213,6 +279,41 @@ def _copy_message_map(value: dict[str, list[Message]]) -> dict[str, list[Message
 def _validate_name(name: str, label: str) -> None:
     if not name or any(character.isspace() for character in name):
         raise ValueError(f"{label} name must be non-empty and contain no spaces.")
+
+
+def _with_memory_layer_overrides(
+    state: AgentMemoryState,
+    *,
+    working_memory: dict[str, str] | None,
+    long_term_memory: dict[str, str] | None,
+) -> AgentMemoryState:
+    if working_memory is None and long_term_memory is None:
+        return state
+
+    return AgentMemoryState(
+        messages=state.messages,
+        summary=state.summary,
+        facts=state.facts,
+        working_memory=(
+            state.working_memory if working_memory is None else working_memory
+        ),
+        long_term_memory=(
+            state.long_term_memory if long_term_memory is None else long_term_memory
+        ),
+        branches=state.branches,
+        checkpoints=state.checkpoints,
+        current_branch=state.current_branch,
+    )
+
+
+def _validate_memory_key(key: str) -> str:
+    if not key or any(character.isspace() for character in key):
+        raise ValueError("Memory key must be non-empty and contain no spaces.")
+    return key
+
+
+def _format_memory_map(memory: dict[str, str]) -> str:
+    return "\n".join(f"- {key}: {value}" for key, value in sorted(memory.items()))
 
 
 def _load_memory(memory: AgentMemory | None) -> AgentMemoryState:

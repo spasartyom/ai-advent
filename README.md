@@ -1,6 +1,6 @@
 # AI Advent
 
-CLI-проект для челленджа по изучению AI-агентов. Ветка второй недели строит одного агента, который будет постепенно развиваться: от простого вызова LLM до памяти, подсчета токенов и стратегий управления контекстом.
+CLI-проект для челленджа по изучению AI-агентов. Вторая неделя построила базового CLI-агента с памятью, подсчетом токенов и стратегиями управления контекстом. Третья неделя развивает его в Study Coach Agent: учебного ассистента с явной моделью памяти и управляемым состоянием задач.
 
 Задания первой недели сохранены в Git-тегах:
 
@@ -244,3 +244,40 @@ ai-advent agent --show-tokens --context-strategy branch --memory-file .ai-advent
 - стабильность важных деталей;
 - `prompt_tokens`;
 - удобство работы.
+
+## Неделя 3
+
+### День 11: модель памяти агента
+
+Агент получил явные слои памяти для Study Coach сценариев:
+
+- краткосрочная память - текущий диалог, поле `messages`;
+- рабочая память - данные текущей учебной задачи, поле `working_memory`;
+- долговременная память - устойчивые знания и решения, поле `long_term_memory`.
+
+Краткосрочная память обновляется обычными репликами диалога. Рабочая и долговременная память обновляются только явными командами пользователя:
+
+```text
+/memory set working lesson_topic Python decorators
+/memory set working current_exercise "write a decorator that logs calls"
+/memory set long preferred_language ru
+/memory set long learning_style "short explanation, then practice"
+```
+
+Посмотреть слои памяти:
+
+```text
+/memory show
+/memory show short
+/memory show working
+/memory show long
+```
+
+Удалить значение:
+
+```text
+/memory forget working current_exercise
+/memory forget long learning_style
+```
+
+Рабочая и долговременная память сохраняются отдельно в JSON-файле рядом с историей диалога и добавляются к каждому запросу отдельным system-блоком.
