@@ -356,6 +356,66 @@ class AgentTests(unittest.TestCase):
             {"role": "user", "content": "Continue lesson"},
         )
 
+    def test_agent_saves_user_profile(self) -> None:
+        api = FakeChatCompletionsAPI()
+
+        with TemporaryDirectory() as directory:
+            memory = JsonFileMemory(Path(directory) / "memory.json")
+            agent = Agent(api, "test-model", memory=memory)
+
+            agent.remember_profile("answer_style", "short, then practice")
+
+            state = memory.load_state()
+            self.assertEqual(
+                state.user_profile,
+                {"answer_style": "short, then practice"},
+            )
+
+    def test_agent_includes_user_profile_in_request(self) -> None:
+        api = FakeChatCompletionsAPI()
+        agent = Agent(
+            api,
+            "test-model",
+            user_profile={
+                "language": "ru",
+                "answer_style": "short, then practice",
+            },
+        )
+
+        agent.run_turn("Explain decorators")
+
+        messages = api.requests[0]["messages"]
+        self.assertIn("Профиль пользователя", messages[1]["content"])
+        self.assertIn("language: ru", messages[1]["content"])
+        self.assertIn("answer_style: short, then practice", messages[1]["content"])
+        self.assertEqual(
+            messages[2],
+            {"role": "user", "content": "Explain decorators"},
+        )
+
+    def test_agent_uses_different_profile_messages_for_different_profiles(self) -> None:
+        concise_api = FakeChatCompletionsAPI()
+        detailed_api = FakeChatCompletionsAPI()
+        concise_agent = Agent(
+            concise_api,
+            "test-model",
+            user_profile={"answer_style": "concise"},
+        )
+        detailed_agent = Agent(
+            detailed_api,
+            "test-model",
+            user_profile={"answer_style": "detailed"},
+        )
+
+        concise_agent.run_turn("Explain decorators")
+        detailed_agent.run_turn("Explain decorators")
+
+        concise_profile = concise_api.requests[0]["messages"][1]["content"]
+        detailed_profile = detailed_api.requests[0]["messages"][1]["content"]
+        self.assertIn("answer_style: concise", concise_profile)
+        self.assertIn("answer_style: detailed", detailed_profile)
+        self.assertNotEqual(concise_profile, detailed_profile)
+
     def test_agent_creates_and_switches_branches_from_checkpoint(self) -> None:
         api = FakeChatCompletionsAPI()
         agent = Agent(api, "test-model")
