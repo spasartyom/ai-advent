@@ -7,6 +7,7 @@ from ai_advent.cli import (
     build_context_strategy,
     handle_branch_command,
     handle_memory_command,
+    handle_profile_command,
     parse_args,
     read_paste_block,
     run_agent,
@@ -25,6 +26,7 @@ class FakeAgent:
         self.messages: list[str] = []
         self.working_memory: dict[str, str] = {}
         self.long_term_memory: dict[str, str] = {}
+        self.user_profile: dict[str, str] = {}
 
     def run_turn(self, message: str) -> object:
         self.messages.append(message)
@@ -41,6 +43,12 @@ class FakeAgent:
 
     def forget_long_term(self, key: str) -> None:
         self.long_term_memory.pop(key, None)
+
+    def remember_profile(self, key: str, value: str) -> None:
+        self.user_profile[key] = value
+
+    def forget_profile(self, key: str) -> None:
+        self.user_profile.pop(key, None)
 
 
 class CliTests(unittest.TestCase):
@@ -132,6 +140,22 @@ class CliTests(unittest.TestCase):
         self.assertEqual(agent.working_memory, {"lesson_topic": "Python decorators"})
         self.assertIn("Working memory saved: lesson_topic", output.getvalue())
 
+    def test_memory_command_saves_quoted_value_without_quotes(self) -> None:
+        agent = FakeAgent()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            handled = handle_memory_command(
+                agent,
+                '/memory set working current_exercise "write a logging decorator"',
+            )
+
+        self.assertTrue(handled)
+        self.assertEqual(
+            agent.working_memory,
+            {"current_exercise": "write a logging decorator"},
+        )
+
     def test_memory_command_saves_long_term_memory(self) -> None:
         agent = FakeAgent()
         output = io.StringIO()
@@ -161,6 +185,56 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(agent.messages, [])
         self.assertEqual(agent.working_memory, {"lesson_topic": "Python decorators"})
+
+    def test_profile_command_saves_user_profile(self) -> None:
+        agent = FakeAgent()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            handled = handle_profile_command(
+                agent,
+                "/profile set answer_style short then practice",
+            )
+
+        self.assertTrue(handled)
+        self.assertEqual(agent.user_profile, {"answer_style": "short then practice"})
+        self.assertIn("Profile saved: answer_style", output.getvalue())
+
+    def test_profile_command_saves_quoted_value_without_quotes(self) -> None:
+        agent = FakeAgent()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            handled = handle_profile_command(
+                agent,
+                '/profile set answer_style "short, then practice"',
+            )
+
+        self.assertTrue(handled)
+        self.assertEqual(agent.user_profile, {"answer_style": "short, then practice"})
+
+    def test_profile_command_shows_user_profile(self) -> None:
+        agent = FakeAgent()
+        agent.user_profile["language"] = "ru"
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            handled = handle_profile_command(agent, "/profile show")
+
+        self.assertTrue(handled)
+        self.assertIn("User profile:", output.getvalue())
+        self.assertIn("language: ru", output.getvalue())
+
+    def test_run_agent_handles_profile_command_without_model_turn(self) -> None:
+        agent = FakeAgent()
+        inputs = iter(["/profile set language ru", "/exit"])
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            run_agent(agent, "test-model", None, read_input=lambda _: next(inputs))
+
+        self.assertEqual(agent.messages, [])
+        self.assertEqual(agent.user_profile, {"language": "ru"})
 
     def test_run_agent_reads_user_messages_until_exit(self) -> None:
         agent = FakeAgent()

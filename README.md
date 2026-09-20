@@ -281,3 +281,40 @@ ai-advent agent --show-tokens --context-strategy branch --memory-file .ai-advent
 ```
 
 Рабочая и долговременная память сохраняются отдельно в JSON-файле рядом с историей диалога и добавляются к каждому запросу отдельным system-блоком.
+
+### День 12: персонализация ассистента
+
+Агент получил профиль пользователя поверх модели памяти.
+
+Профиль хранится в поле `user_profile` и подключается к каждому запросу отдельным system-блоком перед рабочей и долговременной памятью.
+
+Настроить профиль:
+
+```text
+/profile set name Anton
+/profile set language ru
+/profile set answer_style "short explanation, then practice"
+/profile set format "bullets for steps, code for examples"
+/profile set constraints "do not give full exercise solution before my attempt"
+```
+
+Посмотреть профиль:
+
+```text
+/profile show
+```
+
+Удалить значение:
+
+```text
+/profile forget constraints
+```
+
+Для ручной проверки можно запустить два агента с разными файлами памяти и записать разные профили:
+
+```bash
+ai-advent agent --memory-file .ai-advent/profile-short.json
+ai-advent agent --memory-file .ai-advent/profile-detailed.json
+```
+
+Один и тот же запрос должен учитывать профиль автоматически: язык, стиль ответа, формат и ограничения.

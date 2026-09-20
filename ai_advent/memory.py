@@ -13,6 +13,7 @@ class AgentMemoryState:
     facts: dict[str, str] | None = None
     working_memory: dict[str, str] | None = None
     long_term_memory: dict[str, str] | None = None
+    user_profile: dict[str, str] | None = None
     branches: dict[str, list[Message]] | None = None
     checkpoints: dict[str, list[Message]] | None = None
     current_branch: str = "main"
@@ -61,6 +62,10 @@ class JsonFileMemory:
         if not isinstance(long_term_memory, dict):
             raise ValueError("Memory file long_term_memory must be an object.")
 
+        user_profile = data.get("user_profile", {})
+        if not isinstance(user_profile, dict):
+            raise ValueError("Memory file user_profile must be an object.")
+
         branches = data.get("branches", {})
         if not isinstance(branches, dict):
             raise ValueError("Memory file branches must be an object.")
@@ -79,6 +84,7 @@ class JsonFileMemory:
             facts=_validate_facts(facts),
             working_memory=_validate_string_map(working_memory, "working_memory"),
             long_term_memory=_validate_string_map(long_term_memory, "long_term_memory"),
+            user_profile=_validate_string_map(user_profile, "user_profile"),
             branches=_validate_message_map(branches, "branch"),
             checkpoints=_validate_message_map(checkpoints, "checkpoint"),
             current_branch=current_branch,
@@ -91,6 +97,7 @@ class JsonFileMemory:
             "facts": dict(state.facts or {}),
             "working_memory": dict(state.working_memory or {}),
             "long_term_memory": dict(state.long_term_memory or {}),
+            "user_profile": dict(state.user_profile or {}),
             "messages": [message.copy() for message in state.messages],
             "branches": _copy_message_map(state.branches or {}),
             "checkpoints": _copy_message_map(state.checkpoints or {}),

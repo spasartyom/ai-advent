@@ -10,9 +10,10 @@ from ai_advent.memory import AgentMemory, AgentMemoryState
 from ai_advent.tokens import TokenReport
 
 DEFAULT_SYSTEM_PROMPT = (
-    "Ты полезный AI-агент. Отвечай кратко и по делу. "
-    "Не задавай уточняющих вопросов; если данных не хватает, сделай разумное "
-    "предположение и явно обозначь его."
+    "Ты Study Coach Agent: персональный учебный ассистент. "
+    "Объясняй кратко и по делу, помогай учиться через понятные шаги и практику. "
+    "Учитывай профиль пользователя и явные слои памяти. "
+    "Если данных не хватает, сделай разумное предположение и явно обозначь его."
 )
 
 
@@ -40,6 +41,7 @@ class Agent:
         facts: dict[str, str] | None = None,
         working_memory: dict[str, str] | None = None,
         long_term_memory: dict[str, str] | None = None,
+        user_profile: dict[str, str] | None = None,
         branch: str | None = None,
     ) -> None:
         self._chat_completions_api = chat_completions_api
@@ -53,6 +55,7 @@ class Agent:
                 memory_state,
                 working_memory=working_memory,
                 long_term_memory=long_term_memory,
+                user_profile=user_profile,
             )
         else:
             memory_state = AgentMemoryState(
@@ -61,6 +64,7 @@ class Agent:
                 facts=facts or {},
                 working_memory=working_memory or {},
                 long_term_memory=long_term_memory or {},
+                user_profile=user_profile or {},
                 current_branch=branch or "main",
             )
         self._branches = _copy_message_map(memory_state.branches or {})
@@ -75,6 +79,7 @@ class Agent:
         self._facts = dict(memory_state.facts or {})
         self._working_memory = dict(memory_state.working_memory or {})
         self._long_term_memory = dict(memory_state.long_term_memory or {})
+        self._user_profile = dict(memory_state.user_profile or {})
 
     @property
     def messages(self) -> list[Message]:
@@ -97,6 +102,10 @@ class Agent:
         return dict(self._long_term_memory)
 
     @property
+    def user_profile(self) -> dict[str, str]:
+        return dict(self._user_profile)
+
+    @property
     def current_branch(self) -> str:
         return self._current_branch
 
@@ -114,6 +123,14 @@ class Agent:
 
     def forget_long_term(self, key: str) -> None:
         self._long_term_memory.pop(key, None)
+        self._save_messages()
+
+    def remember_profile(self, key: str, value: str) -> None:
+        self._user_profile[_validate_memory_key(key)] = value
+        self._save_messages()
+
+    def forget_profile(self, key: str) -> None:
+        self._user_profile.pop(key, None)
         self._save_messages()
 
     def run_turn(
@@ -164,13 +181,30 @@ class Agent:
             )
         )
         memory_messages = self._build_memory_messages()
+        profile_messages = self._build_profile_messages()
         if not self._system_prompt:
-            return [*memory_messages, *context_messages]
+            return [*profile_messages, *memory_messages, *context_messages]
 
         return [
             {"role": "system", "content": self._system_prompt},
+            *profile_messages,
             *memory_messages,
             *context_messages,
+        ]
+
+    def _build_profile_messages(self) -> list[Message]:
+        if not self._user_profile:
+            return []
+
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "Профиль пользователя Study Coach Agent. "
+                    "Автоматически адаптируй стиль, язык, формат и ограничения ответа под этот профиль:\n\n"
+                    + _format_memory_map(self._user_profile)
+                ),
+            }
         ]
 
     def _build_memory_messages(self) -> list[Message]:
@@ -225,6 +259,7 @@ class Agent:
                     facts=self._facts,
                     working_memory=self._working_memory,
                     long_term_memory=self._long_term_memory,
+                    user_profile=self._user_profile,
                     branches=self._branches,
                     checkpoints=self._checkpoints,
                     current_branch=self._current_branch,
@@ -286,8 +321,9 @@ def _with_memory_layer_overrides(
     *,
     working_memory: dict[str, str] | None,
     long_term_memory: dict[str, str] | None,
+    user_profile: dict[str, str] | None,
 ) -> AgentMemoryState:
-    if working_memory is None and long_term_memory is None:
+    if working_memory is None and long_term_memory is None and user_profile is None:
         return state
 
     return AgentMemoryState(
@@ -300,6 +336,7 @@ def _with_memory_layer_overrides(
         long_term_memory=(
             state.long_term_memory if long_term_memory is None else long_term_memory
         ),
+        user_profile=state.user_profile if user_profile is None else user_profile,
         branches=state.branches,
         checkpoints=state.checkpoints,
         current_branch=state.current_branch,

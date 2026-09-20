@@ -1,5 +1,6 @@
 import argparse
 import os
+import shlex
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -75,6 +76,9 @@ def run_agent(
         if handle_memory_command(agent, message):
             continue
 
+        if handle_profile_command(agent, message):
+            continue
+
         if not message:
             continue
 
@@ -114,7 +118,7 @@ def handle_branch_command(agent: Agent, message: str) -> bool:
 
 
 def handle_memory_command(agent: Agent, message: str) -> bool:
-    parts = message.split()
+    parts = split_command(message)
     if not parts or parts[0].lower() != "/memory":
         return False
 
@@ -158,6 +162,61 @@ def print_memory_usage() -> None:
     print("Usage: /memory show [short|working|long|all]")
     print("       /memory set working|long KEY VALUE")
     print("       /memory forget working|long KEY")
+
+
+def handle_profile_command(agent: Agent, message: str) -> bool:
+    parts = split_command(message)
+    if not parts or parts[0].lower() != "/profile":
+        return False
+
+    args = parts[1:]
+    if not args:
+        print_profile_usage()
+        return True
+
+    subcommand = args[0].lower()
+    try:
+        if subcommand == "show":
+            if len(args) != 1:
+                print_profile_usage()
+                return True
+            print_string_map("User profile", agent.user_profile)
+            return True
+
+        if subcommand == "set":
+            if len(args) < 3:
+                print("Usage: /profile set KEY VALUE")
+                return True
+            agent.remember_profile(args[1], " ".join(args[2:]))
+            print(f"Profile saved: {args[1]}")
+            return True
+
+        if subcommand in {"forget", "remove"}:
+            if len(args) != 2:
+                print("Usage: /profile forget KEY")
+                return True
+            agent.forget_profile(args[1])
+            print(f"Profile removed: {args[1]}")
+            return True
+    except ValueError as error:
+        print(f"Profile error: {error}", file=sys.stderr)
+        return True
+
+    print_profile_usage()
+    return True
+
+
+def print_profile_usage() -> None:
+    print("Usage: /profile show")
+    print("       /profile set KEY VALUE")
+    print("       /profile forget KEY")
+
+
+def split_command(message: str) -> list[str]:
+    try:
+        return shlex.split(message)
+    except ValueError:
+        return message.split()
 
 
 def print_memory_layer(agent: Agent, layer: str) -> None:

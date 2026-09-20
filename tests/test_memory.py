@@ -33,6 +33,7 @@ class JsonFileMemoryTests(unittest.TestCase):
                 facts={"goal": "build agent"},
                 working_memory={"lesson_topic": "Python decorators"},
                 long_term_memory={"preferred_language": "ru"},
+                user_profile={"answer_style": "short, then practice"},
                 messages=[
                     {"role": "user", "content": "Привет"},
                     {"role": "assistant", "content": "Короткий ответ"},
@@ -73,6 +74,7 @@ class JsonFileMemoryTests(unittest.TestCase):
             self.assertEqual(memory.load_state().facts, {})
             self.assertEqual(memory.load_state().working_memory, {})
             self.assertEqual(memory.load_state().long_term_memory, {})
+            self.assertEqual(memory.load_state().user_profile, {})
             self.assertEqual(memory.load_state().branches, {})
             self.assertEqual(memory.load_state().checkpoints, {})
 
@@ -129,6 +131,18 @@ class JsonFileMemoryTests(unittest.TestCase):
             path = Path(directory) / "memory.json"
             path.write_text(
                 json.dumps({"long_term_memory": {"language": []}, "messages": []}),
+                encoding="utf-8",
+            )
+            memory = JsonFileMemory(path)
+
+            with self.assertRaises(ValueError):
+                memory.load_state()
+
+    def test_load_rejects_invalid_user_profile_shape(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "memory.json"
+            path.write_text(
+                json.dumps({"user_profile": {"answer_style": []}, "messages": []}),
                 encoding="utf-8",
             )
             memory = JsonFileMemory(path)

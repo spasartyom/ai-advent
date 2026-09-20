@@ -28,6 +28,7 @@ Week 3 has started:
 
 - `w3_d1` / Day 11 - explicit memory layers for short-term, working, and
   long-term memory
+- `w3_d2` / Day 12 - user profile personalization connected to every request
 
 ## Current Product Shape
 
@@ -73,6 +74,7 @@ Responsibilities:
 - support `/paste` and `/send` for multiline user messages;
 - support `/memory ...` commands for explicit working and long-term memory
   updates;
+- support `/profile ...` commands for explicit user profile personalization;
 - expose `--context-strategy full|summary|sliding-window|facts|branch`,
   `--keep-last`, and `--branch`;
 - support `/checkpoint` and `/branch ...` commands for branching experiments.
@@ -91,8 +93,10 @@ Responsibilities:
 - load summary from memory when configured;
 - load facts, branches, and checkpoints from memory when configured;
 - load working and long-term memory layers when configured;
+- load the user profile when configured;
 - accept a user message through `Agent.run_turn`;
 - prepare the message list through the selected context strategy;
+- prepend the user profile to each request when present;
 - prepend explicit working and long-term memory to each request when present;
 - call the low-level chat helper;
 - append the assistant response;
@@ -130,11 +134,11 @@ Current implementation:
 
 - `JsonFileMemory` stores messages and state in a JSON file with the shape
   `{"summary": "...", "facts": {...}, "working_memory": {...},
-  "long_term_memory": {...}, "messages": [...], "branches": {...},
+  "long_term_memory": {...}, "user_profile": {...}, "messages": [...], "branches": {...},
   "checkpoints": {...}, "current_branch": "main"}`;
 - missing files load as empty history;
 - old files without `summary` load with an empty summary;
-- old files without facts/working memory/long-term memory/branches/checkpoints
+- old files without facts/working memory/long-term memory/user profile/branches/checkpoints
   load empty values;
 - invalid message objects raise `ValueError`;
 - parent directories are created automatically on save.
@@ -198,6 +202,20 @@ not by automatic extraction from arbitrary chat text. The CLI commands are:
 - `/memory set long KEY VALUE`
 - `/memory forget working|long KEY`
 
+### Week 3 Personalization
+
+Day 12 stores personalization in `user_profile`, separate from dialog history and general long-term memory.
+
+The profile is explicit key-value data such as `name`, `language`, `answer_style`, `format`, and `constraints`.
+
+The profile is prepended to every model request as a dedicated system message, so the Study Coach Agent can automatically adapt language, style, format, and constraints.
+
+The CLI commands are:
+
+- `/profile show`
+- `/profile set KEY VALUE`
+- `/profile forget KEY`
+
 ### `tests/`
 
 Tests use fake Chat Completions APIs rather than real network calls.
@@ -208,6 +226,7 @@ Current tests cover:
 - in-process dialog history;
 - JSON-backed persistent memory;
 - explicit working and long-term memory layers;
+- explicit user profile personalization;
 - API usage token reporting;
 - full and summary context strategies;
 - sliding window, sticky facts, and branching context workflows;
