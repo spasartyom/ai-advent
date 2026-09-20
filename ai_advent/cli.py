@@ -72,6 +72,9 @@ def run_agent(
         if handle_branch_command(agent, message):
             continue
 
+        if handle_memory_command(agent, message):
+            continue
+
         if not message:
             continue
 
@@ -108,6 +111,111 @@ def handle_branch_command(agent: Agent, message: str) -> bool:
         return True
 
     return False
+
+
+def handle_memory_command(agent: Agent, message: str) -> bool:
+    parts = message.split()
+    if not parts or parts[0].lower() != "/memory":
+        return False
+
+    args = parts[1:]
+    if not args:
+        print_memory_usage()
+        return True
+
+    subcommand = args[0].lower()
+    try:
+        if subcommand == "show":
+            layer = args[1].lower() if len(args) == 2 else "all"
+            if len(args) > 2:
+                print_memory_usage()
+                return True
+            print_memory_layer(agent, layer)
+            return True
+
+        if subcommand == "set":
+            if len(args) < 4:
+                print("Usage: /memory set working|long KEY VALUE")
+                return True
+            set_memory_value(agent, args[1].lower(), args[2], " ".join(args[3:]))
+            return True
+
+        if subcommand in {"forget", "remove"}:
+            if len(args) != 3:
+                print("Usage: /memory forget working|long KEY")
+                return True
+            forget_memory_value(agent, args[1].lower(), args[2])
+            return True
+    except ValueError as error:
+        print(f"Memory error: {error}", file=sys.stderr)
+        return True
+
+    print_memory_usage()
+    return True
+
+
+def print_memory_usage() -> None:
+    print("Usage: /memory show [short|working|long|all]")
+    print("       /memory set working|long KEY VALUE")
+    print("       /memory forget working|long KEY")
+
+
+def print_memory_layer(agent: Agent, layer: str) -> None:
+    if layer == "all":
+        print_memory_layer(agent, "short")
+        print_memory_layer(agent, "working")
+        print_memory_layer(agent, "long")
+        return
+
+    if layer == "short":
+        messages = agent.messages
+        print(f"Short-term memory: {len(messages)} messages")
+        for message in messages:
+            print(f"  {message['role']}: {message['content']}")
+        return
+
+    if layer == "working":
+        print_string_map("Working memory", agent.working_memory)
+        return
+
+    if layer in {"long", "long-term", "long_term"}:
+        print_string_map("Long-term memory", agent.long_term_memory)
+        return
+
+    print_memory_usage()
+
+
+def print_string_map(label: str, values: dict[str, str]) -> None:
+    print(f"{label}:")
+    if not values:
+        print("  (empty)")
+        return
+    for key, value in sorted(values.items()):
+        print(f"  {key}: {value}")
+
+
+def set_memory_value(agent: Agent, layer: str, key: str, value: str) -> None:
+    if layer == "working":
+        agent.remember_working(key, value)
+        print(f"Working memory saved: {key}")
+        return
+    if layer in {"long", "long-term", "long_term"}:
+        agent.remember_long_term(key, value)
+        print(f"Long-term memory saved: {key}")
+        return
+    raise ValueError("Memory layer must be working or long.")
+
+
+def forget_memory_value(agent: Agent, layer: str, key: str) -> None:
+    if layer == "working":
+        agent.forget_working(key)
+        print(f"Working memory removed: {key}")
+        return
+    if layer in {"long", "long-term", "long_term"}:
+        agent.forget_long_term(key)
+        print(f"Long-term memory removed: {key}")
+        return
+    raise ValueError("Memory layer must be working or long.")
 
 
 def handle_branch_subcommand(agent: Agent, args: list[str]) -> bool:

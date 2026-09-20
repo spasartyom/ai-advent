@@ -2,8 +2,9 @@
 
 This repository is a learning project for an AI agents challenge.
 
-Current focus: week 2. Week 1 is archived in Git tags and should not shape new
-implementation unless we explicitly need to inspect old exercises.
+Current state: week 2 is complete and week 3 has started. Week 1 is archived in
+Git tags and should not shape new implementation unless we explicitly need to
+inspect old exercises. Week 3 develops the CLI agent into a Study Coach Agent.
 
 ## Challenge State
 
@@ -15,13 +16,18 @@ Week 1 is preserved in tags:
 - `w1_d4` - temperature comparison
 - `w1_d5` - model comparison
 
-Current branch work starts week 2:
+Week 2 is complete:
 
 - `w2_d1` / Day 6 - first standalone agent
 - `w2_d2` / Day 7 - JSON-backed persistent context
 - `w2_d3` / Day 8 - API usage token reporting
 - `w2_d4` / Day 9 - summary-based context compression
 - `w2_d5` / Day 10 - sliding window, sticky facts, and branching strategies
+
+Week 3 has started:
+
+- `w3_d1` / Day 11 - explicit memory layers for short-term, working, and
+  long-term memory
 
 ## Current Product Shape
 
@@ -64,7 +70,9 @@ Responsibilities:
 - create the OpenAI-compatible client;
 - create `Agent`;
 - run the interactive terminal loop;
-- support `/paste` and `/send` for multiline user messages.
+- support `/paste` and `/send` for multiline user messages;
+- support `/memory ...` commands for explicit working and long-term memory
+  updates;
 - expose `--context-strategy full|summary|sliding-window|facts|branch`,
   `--keep-last`, and `--branch`;
 - support `/checkpoint` and `/branch ...` commands for branching experiments.
@@ -74,7 +82,7 @@ accounting, or context strategies here.
 
 ### `ai_advent/agent.py`
 
-Current week 2 core.
+Current core agent.
 
 Responsibilities:
 
@@ -82,8 +90,10 @@ Responsibilities:
 - load initial messages from memory when configured;
 - load summary from memory when configured;
 - load facts, branches, and checkpoints from memory when configured;
+- load working and long-term memory layers when configured;
 - accept a user message through `Agent.run_turn`;
 - prepare the message list through the selected context strategy;
+- prepend explicit working and long-term memory to each request when present;
 - call the low-level chat helper;
 - append the assistant response;
 - compress old context when the selected strategy requires it;
@@ -93,8 +103,8 @@ Responsibilities:
   `TokenReport`.
 
 The agent is intentionally a separate entity from the CLI and from the raw API
-client. Future week 2 tasks should evolve this layer rather than rebuilding the
-chat loop.
+client. Future work should evolve this layer rather than rebuilding the chat
+loop.
 
 ### `ai_advent/chat.py`
 
@@ -118,12 +128,14 @@ Persistent memory adapters.
 
 Current implementation:
 
-- `JsonFileMemory` stores messages in a JSON file with the shape
-  `{"summary": "...", "facts": {...}, "messages": [...], "branches": {...},
+- `JsonFileMemory` stores messages and state in a JSON file with the shape
+  `{"summary": "...", "facts": {...}, "working_memory": {...},
+  "long_term_memory": {...}, "messages": [...], "branches": {...},
   "checkpoints": {...}, "current_branch": "main"}`;
 - missing files load as empty history;
 - old files without `summary` load with an empty summary;
-- old files without facts/branches/checkpoints load empty values;
+- old files without facts/working memory/long-term memory/branches/checkpoints
+  load empty values;
 - invalid message objects raise `ValueError`;
 - parent directories are created automatically on save.
 
@@ -164,6 +176,28 @@ Summary compression uses an additional Chat Completions request to update the
 stored summary from older messages. The main CLI token report shows the usage of
 the user-facing response call.
 
+Branching is managed by `Agent` rather than by a separate context strategy:
+`--context-strategy branch` currently uses full context for the active branch,
+while `/checkpoint` and `/branch ...` commands switch the message history that
+the agent reads and writes.
+
+### Week 3 Memory Layers
+
+Day 11 uses a Study Coach framing:
+
+- short-term memory is the current dialog (`messages`);
+- working memory is explicit key-value state for the current learning task;
+- long-term memory is explicit key-value state for stable user/assistant
+  knowledge.
+
+Working and long-term memory are updated only by explicit calls or CLI commands,
+not by automatic extraction from arbitrary chat text. The CLI commands are:
+
+- `/memory show [short|working|long|all]`
+- `/memory set working KEY VALUE`
+- `/memory set long KEY VALUE`
+- `/memory forget working|long KEY`
+
 ### `tests/`
 
 Tests use fake Chat Completions APIs rather than real network calls.
@@ -173,6 +207,7 @@ Current tests cover:
 - `Agent` request/response behavior;
 - in-process dialog history;
 - JSON-backed persistent memory;
+- explicit working and long-term memory layers;
 - API usage token reporting;
 - full and summary context strategies;
 - sliding window, sticky facts, and branching context workflows;
@@ -188,18 +223,19 @@ Run tests with:
 python3 -m unittest discover -s tests
 ```
 
-## Architecture Direction For Week 2
+## Architecture Direction
 
 Do not reintroduce the week 1 comparison commands into active code. They live in
 tags now.
 
-Expected evolution:
+Week 2 implementation is finished. Preserve its shape unless a future week
+explicitly needs a refactor:
 
-- Extend comparison notes from manual Day 10 experiments.
-
-Likely future modules:
-
-- `ai_advent/context.py` - context strategy interfaces and implementations.
+- CLI remains orchestration and terminal I/O.
+- `Agent` owns turn execution, memory state, and branch operations.
+- `chat.py` remains the provider-agnostic Chat Completions adapter.
+- `context.py` remains the place for context-management strategies.
+- `memory.py` remains the place for persistent state shape and validation.
 
 Preferred design:
 
@@ -216,3 +252,7 @@ The working tree may contain local artifacts unrelated to the challenge, such as
 custom skills. Do not remove or rewrite unrelated files unless the user asks.
 
 `.env` is ignored and should never be committed.
+
+## Writing Notes
+
+When editing Markdown files, do not hard-wrap lines in the middle of a sentence. Prefer one sentence or list item per line unless an existing table, code block, or quoted text requires a different shape.

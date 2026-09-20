@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from ai_advent.cli import (
     build_context_strategy,
     handle_branch_command,
+    handle_memory_command,
     parse_args,
     read_paste_block,
     run_agent,
@@ -22,10 +23,24 @@ from ai_advent.tokens import TokenReport
 class FakeAgent:
     def __init__(self) -> None:
         self.messages: list[str] = []
+        self.working_memory: dict[str, str] = {}
+        self.long_term_memory: dict[str, str] = {}
 
     def run_turn(self, message: str) -> object:
         self.messages.append(message)
         return SimpleNamespace(text=f"agent answer to {message}")
+
+    def remember_working(self, key: str, value: str) -> None:
+        self.working_memory[key] = value
+
+    def remember_long_term(self, key: str, value: str) -> None:
+        self.long_term_memory[key] = value
+
+    def forget_working(self, key: str) -> None:
+        self.working_memory.pop(key, None)
+
+    def forget_long_term(self, key: str) -> None:
+        self.long_term_memory.pop(key, None)
 
 
 class CliTests(unittest.TestCase):
@@ -102,6 +117,50 @@ class CliTests(unittest.TestCase):
 
         self.assertTrue(handled)
         self.assertEqual(agent.checkpoints, ["base"])
+
+    def test_memory_command_saves_working_memory(self) -> None:
+        agent = FakeAgent()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            handled = handle_memory_command(
+                agent,
+                "/memory set working lesson_topic Python decorators",
+            )
+
+        self.assertTrue(handled)
+        self.assertEqual(agent.working_memory, {"lesson_topic": "Python decorators"})
+        self.assertIn("Working memory saved: lesson_topic", output.getvalue())
+
+    def test_memory_command_saves_long_term_memory(self) -> None:
+        agent = FakeAgent()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            handled = handle_memory_command(
+                agent,
+                "/memory set long preferred_language ru",
+            )
+
+        self.assertTrue(handled)
+        self.assertEqual(agent.long_term_memory, {"preferred_language": "ru"})
+        self.assertIn("Long-term memory saved: preferred_language", output.getvalue())
+
+    def test_run_agent_handles_memory_command_without_model_turn(self) -> None:
+        agent = FakeAgent()
+        inputs = iter(
+            [
+                "/memory set working lesson_topic Python decorators",
+                "/exit",
+            ]
+        )
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            run_agent(agent, "test-model", None, read_input=lambda _: next(inputs))
+
+        self.assertEqual(agent.messages, [])
+        self.assertEqual(agent.working_memory, {"lesson_topic": "Python decorators"})
 
     def test_run_agent_reads_user_messages_until_exit(self) -> None:
         agent = FakeAgent()

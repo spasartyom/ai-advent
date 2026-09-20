@@ -315,6 +315,47 @@ class AgentTests(unittest.TestCase):
 
         self.assertEqual(agent.facts, {"goal": "build agent"})
 
+    def test_agent_saves_explicit_memory_layers(self) -> None:
+        api = FakeChatCompletionsAPI()
+
+        with TemporaryDirectory() as directory:
+            memory = JsonFileMemory(Path(directory) / "memory.json")
+            agent = Agent(api, "test-model", memory=memory)
+
+            agent.remember_working("lesson_topic", "Python decorators")
+            agent.remember_long_term("preferred_language", "ru")
+
+            state = memory.load_state()
+            self.assertEqual(
+                state.working_memory,
+                {"lesson_topic": "Python decorators"},
+            )
+            self.assertEqual(state.long_term_memory, {"preferred_language": "ru"})
+
+    def test_agent_includes_memory_layers_in_request(self) -> None:
+        api = FakeChatCompletionsAPI()
+        agent = Agent(
+            api,
+            "test-model",
+            working_memory={"lesson_topic": "Python decorators"},
+            long_term_memory={"preferred_language": "ru"},
+        )
+
+        agent.run_turn("Continue lesson")
+
+        messages = api.requests[0]["messages"]
+        self.assertEqual(
+            messages[0],
+            {"role": "system", "content": DEFAULT_SYSTEM_PROMPT},
+        )
+        self.assertIn("Рабочая память", messages[1]["content"])
+        self.assertIn("lesson_topic: Python decorators", messages[1]["content"])
+        self.assertIn("preferred_language: ru", messages[1]["content"])
+        self.assertEqual(
+            messages[2],
+            {"role": "user", "content": "Continue lesson"},
+        )
+
     def test_agent_creates_and_switches_branches_from_checkpoint(self) -> None:
         api = FakeChatCompletionsAPI()
         agent = Agent(api, "test-model")

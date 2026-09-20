@@ -11,6 +11,8 @@ class AgentMemoryState:
     messages: list[Message]
     summary: str = ""
     facts: dict[str, str] | None = None
+    working_memory: dict[str, str] | None = None
+    long_term_memory: dict[str, str] | None = None
     branches: dict[str, list[Message]] | None = None
     checkpoints: dict[str, list[Message]] | None = None
     current_branch: str = "main"
@@ -51,6 +53,14 @@ class JsonFileMemory:
         if not isinstance(facts, dict):
             raise ValueError("Memory file facts must be an object.")
 
+        working_memory = data.get("working_memory", {})
+        if not isinstance(working_memory, dict):
+            raise ValueError("Memory file working_memory must be an object.")
+
+        long_term_memory = data.get("long_term_memory", {})
+        if not isinstance(long_term_memory, dict):
+            raise ValueError("Memory file long_term_memory must be an object.")
+
         branches = data.get("branches", {})
         if not isinstance(branches, dict):
             raise ValueError("Memory file branches must be an object.")
@@ -67,6 +77,8 @@ class JsonFileMemory:
             messages=[_validate_message(message) for message in messages],
             summary=summary,
             facts=_validate_facts(facts),
+            working_memory=_validate_string_map(working_memory, "working_memory"),
+            long_term_memory=_validate_string_map(long_term_memory, "long_term_memory"),
             branches=_validate_message_map(branches, "branch"),
             checkpoints=_validate_message_map(checkpoints, "checkpoint"),
             current_branch=current_branch,
@@ -77,6 +89,8 @@ class JsonFileMemory:
         payload = {
             "summary": state.summary,
             "facts": dict(state.facts or {}),
+            "working_memory": dict(state.working_memory or {}),
+            "long_term_memory": dict(state.long_term_memory or {}),
             "messages": [message.copy() for message in state.messages],
             "branches": _copy_message_map(state.branches or {}),
             "checkpoints": _copy_message_map(state.checkpoints or {}),
@@ -107,11 +121,20 @@ def _validate_message(message: object) -> Message:
 
 
 def _validate_facts(facts: dict[object, object]) -> dict[str, str]:
+    return _validate_string_map(facts, "facts")
+
+
+def _validate_string_map(
+    value: dict[object, object],
+    label: str,
+) -> dict[str, str]:
     validated: dict[str, str] = {}
-    for key, value in facts.items():
-        if not isinstance(key, str) or not isinstance(value, str):
-            raise ValueError("Memory file facts must contain string keys and values.")
-        validated[key] = value
+    for key, item in value.items():
+        if not isinstance(key, str) or not isinstance(item, str):
+            raise ValueError(
+                f"Memory file {label} must contain string keys and values."
+            )
+        validated[key] = item
     return validated
 
 
