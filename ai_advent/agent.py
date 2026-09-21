@@ -44,6 +44,7 @@ class Agent:
         long_term_memory: dict[str, str] | None = None,
         user_profile: dict[str, str] | None = None,
         task_state: TaskState | None = None,
+        invariants: dict[str, str] | None = None,
         branch: str | None = None,
     ) -> None:
         self._chat_completions_api = chat_completions_api
@@ -59,6 +60,7 @@ class Agent:
                 long_term_memory=long_term_memory,
                 user_profile=user_profile,
                 task_state=task_state,
+                invariants=invariants,
             )
         else:
             memory_state = AgentMemoryState(
@@ -69,6 +71,7 @@ class Agent:
                 long_term_memory=long_term_memory or {},
                 user_profile=user_profile or {},
                 task_state=task_state or create_task_state(),
+                invariants=invariants or {},
                 current_branch=branch or "main",
             )
         self._branches = _copy_message_map(memory_state.branches or {})
@@ -85,6 +88,7 @@ class Agent:
         self._long_term_memory = dict(memory_state.long_term_memory or {})
         self._user_profile = dict(memory_state.user_profile or {})
         self._task_state = memory_state.task_state or create_task_state()
+        self._invariants = dict(memory_state.invariants or {})
 
     @property
     def messages(self) -> list[Message]:
@@ -113,6 +117,10 @@ class Agent:
     @property
     def task_state(self) -> TaskState:
         return self._task_state
+
+    @property
+    def invariants(self) -> dict[str, str]:
+        return dict(self._invariants)
 
     @property
     def current_branch(self) -> str:
@@ -183,6 +191,14 @@ class Agent:
     def resume_task(self) -> None:
         self.update_task_state(paused=False)
 
+    def remember_invariant(self, key: str, value: str) -> None:
+        self._invariants[_validate_memory_key(key)] = value
+        self._save_messages()
+
+    def forget_invariant(self, key: str) -> None:
+        self._invariants.pop(key, None)
+        self._save_messages()
+
     def run_turn(
         self,
         user_message: str,
@@ -192,6 +208,18 @@ class Agent:
         temperature: float | None = None,
     ) -> AgentResponse:
         self._messages.append({"role": "user", "content": user_message})
+        invariant_conflict = self._find_invariant_conflict(user_message)
+        if invariant_conflict is not None:
+            response_text = _format_invariant_refusal(invariant_conflict)
+            self._messages.append({"role": "assistant", "content": response_text})
+            self._save_messages()
+            token_report = TokenReport(
+                prompt_tokens=None,
+                completion_tokens=None,
+                total_tokens=None,
+            )
+            return AgentResponse(text=response_text, token_report=token_report)
+
         request_messages = self._build_request_messages()
 
         try:
@@ -233,10 +261,12 @@ class Agent:
         memory_messages = self._build_memory_messages()
         profile_messages = self._build_profile_messages()
         task_messages = self._build_task_messages()
+        invariant_messages = self._build_invariant_messages()
         if not self._system_prompt:
             return [
                 *profile_messages,
                 *task_messages,
+                *invariant_messages,
                 *memory_messages,
                 *context_messages,
             ]
@@ -245,8 +275,26 @@ class Agent:
             {"role": "system", "content": self._system_prompt},
             *profile_messages,
             *task_messages,
+            *invariant_messages,
             *memory_messages,
             *context_messages,
+        ]
+
+    def _build_invariant_messages(self) -> list[Message]:
+        if not self._invariants:
+            return []
+
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "Инварианты Study Coach Agent. "
+                    "Считай эти правила жесткими ограничениями. "
+                    "Перед ответом проверь, не нарушает ли предложение один из инвариантов. "
+                    "Если запрос конфликтует с инвариантом, откажись от конфликтующей части и кратко объясни, какой инвариант мешает:\n\n"
+                    + _format_memory_map(self._invariants)
+                ),
+            }
         ]
 
     def _build_task_messages(self) -> list[Message]:
@@ -337,6 +385,7 @@ class Agent:
                     long_term_memory=self._long_term_memory,
                     user_profile=self._user_profile,
                     task_state=self._task_state,
+                    invariants=self._invariants,
                     branches=self._branches,
                     checkpoints=self._checkpoints,
                     current_branch=self._current_branch,
@@ -376,6 +425,26 @@ class Agent:
     def list_checkpoints(self) -> list[str]:
         return sorted(self._checkpoints)
 
+    def _find_invariant_conflict(self, user_message: str) -> tuple[str, str] | None:
+        lowered_message = user_message.lower()
+        conflict_words = (
+            "наруш",
+            "игнор",
+            "обойди",
+            "ignore",
+            "violate",
+            "break",
+            "bypass",
+        )
+        if not any(word in lowered_message for word in conflict_words):
+            return None
+
+        for key, value in sorted(self._invariants.items()):
+            if key.lower() in lowered_message:
+                return key, value
+
+        return None
+
 
 def _copy_messages(messages: list[Message]) -> list[Message]:
     return [message.copy() for message in messages]
@@ -400,12 +469,14 @@ def _with_memory_layer_overrides(
     long_term_memory: dict[str, str] | None,
     user_profile: dict[str, str] | None,
     task_state: TaskState | None,
+    invariants: dict[str, str] | None,
 ) -> AgentMemoryState:
     if (
         working_memory is None
         and long_term_memory is None
         and user_profile is None
         and task_state is None
+        and invariants is None
     ):
         return state
 
@@ -421,6 +492,7 @@ def _with_memory_layer_overrides(
         ),
         user_profile=state.user_profile if user_profile is None else user_profile,
         task_state=state.task_state if task_state is None else task_state,
+        invariants=state.invariants if invariants is None else invariants,
         branches=state.branches,
         checkpoints=state.checkpoints,
         current_branch=state.current_branch,
@@ -435,6 +507,14 @@ def _validate_memory_key(key: str) -> str:
 
 def _format_memory_map(memory: dict[str, str]) -> str:
     return "\n".join(f"- {key}: {value}" for key, value in sorted(memory.items()))
+
+
+def _format_invariant_refusal(invariant: tuple[str, str]) -> str:
+    key, value = invariant
+    return (
+        f"Не могу выполнить эту часть запроса: она нарушает инвариант `{key}`. "
+        f"Ограничение: {value}"
+    )
 
 
 def _load_memory(memory: AgentMemory | None) -> AgentMemoryState:

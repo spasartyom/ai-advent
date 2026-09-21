@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from ai_advent.cli import (
     build_context_strategy,
     handle_branch_command,
+    handle_invariant_command,
     handle_memory_command,
     handle_profile_command,
     handle_task_command,
@@ -30,6 +31,7 @@ class FakeAgent:
         self.long_term_memory: dict[str, str] = {}
         self.user_profile: dict[str, str] = {}
         self.task_state = create_task_state()
+        self.invariants: dict[str, str] = {}
 
     def run_turn(self, message: str) -> object:
         self.messages.append(message)
@@ -91,6 +93,12 @@ class FakeAgent:
 
     def resume_task(self) -> None:
         self.update_task_state(paused=False)
+
+    def remember_invariant(self, key: str, value: str) -> None:
+        self.invariants[key] = value
+
+    def forget_invariant(self, key: str) -> None:
+        self.invariants.pop(key, None)
 
 
 class CliTests(unittest.TestCase):
@@ -328,6 +336,54 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(agent.messages, [])
         self.assertEqual(agent.task_state.title, "Learn decorators")
+
+    def test_invariant_command_saves_invariant(self) -> None:
+        agent = FakeAgent()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            handled = handle_invariant_command(
+                agent,
+                '/invariant add no_full_solution "Do not give full solution"',
+            )
+
+        self.assertTrue(handled)
+        self.assertEqual(
+            agent.invariants,
+            {"no_full_solution": "Do not give full solution"},
+        )
+        self.assertIn("Invariant saved: no_full_solution", output.getvalue())
+
+    def test_invariant_command_shows_invariants(self) -> None:
+        agent = FakeAgent()
+        agent.invariants["no_full_solution"] = "Do not give full solution"
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            handled = handle_invariant_command(agent, "/invariant show")
+
+        self.assertTrue(handled)
+        self.assertIn("Invariants:", output.getvalue())
+        self.assertIn("no_full_solution: Do not give full solution", output.getvalue())
+
+    def test_run_agent_handles_invariant_command_without_model_turn(self) -> None:
+        agent = FakeAgent()
+        inputs = iter(
+            [
+                '/invariant add no_full_solution "Do not give full solution"',
+                "/exit",
+            ]
+        )
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            run_agent(agent, "test-model", None, read_input=lambda _: next(inputs))
+
+        self.assertEqual(agent.messages, [])
+        self.assertEqual(
+            agent.invariants,
+            {"no_full_solution": "Do not give full solution"},
+        )
 
     def test_run_agent_reads_user_messages_until_exit(self) -> None:
         agent = FakeAgent()

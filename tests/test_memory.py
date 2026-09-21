@@ -42,6 +42,7 @@ class JsonFileMemoryTests(unittest.TestCase):
                     expected_action="Submit solution",
                     paused=True,
                 ),
+                invariants={"no_full_solution": "Do not give full exercise solution before user attempt."},
                 messages=[
                     {"role": "user", "content": "Привет"},
                     {"role": "assistant", "content": "Короткий ответ"},
@@ -84,6 +85,7 @@ class JsonFileMemoryTests(unittest.TestCase):
             self.assertEqual(memory.load_state().long_term_memory, {})
             self.assertEqual(memory.load_state().user_profile, {})
             self.assertEqual(memory.load_state().task_state, create_task_state())
+            self.assertEqual(memory.load_state().invariants, {})
             self.assertEqual(memory.load_state().branches, {})
             self.assertEqual(memory.load_state().checkpoints, {})
 
@@ -187,6 +189,18 @@ class JsonFileMemoryTests(unittest.TestCase):
                         "messages": [],
                     }
                 ),
+                encoding="utf-8",
+            )
+            memory = JsonFileMemory(path)
+
+            with self.assertRaises(ValueError):
+                memory.load_state()
+
+    def test_load_rejects_invalid_invariants_shape(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "memory.json"
+            path.write_text(
+                json.dumps({"invariants": {"no_full_solution": []}, "messages": []}),
                 encoding="utf-8",
             )
             memory = JsonFileMemory(path)

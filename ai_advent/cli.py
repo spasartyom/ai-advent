@@ -82,6 +82,9 @@ def run_agent(
         if handle_task_command(agent, message):
             continue
 
+        if handle_invariant_command(agent, message):
+            continue
+
         if not message:
             continue
 
@@ -330,6 +333,54 @@ def print_task_state(agent: Agent) -> None:
     print(f"  current_step: {task_state.current_step or '(not set)'}")
     print(f"  expected_action: {task_state.expected_action or '(not set)'}")
     print(f"  paused: {task_state.paused}")
+
+
+def handle_invariant_command(agent: Agent, message: str) -> bool:
+    parts = split_command(message)
+    if not parts or parts[0].lower() not in {"/invariant", "/invariants"}:
+        return False
+
+    args = parts[1:]
+    if not args:
+        print_invariant_usage()
+        return True
+
+    subcommand = args[0].lower()
+    try:
+        if subcommand == "show":
+            if len(args) != 1:
+                print_invariant_usage()
+                return True
+            print_string_map("Invariants", agent.invariants)
+            return True
+
+        if subcommand in {"add", "set"}:
+            if len(args) < 3:
+                print("Usage: /invariant add ID TEXT")
+                return True
+            agent.remember_invariant(args[1], " ".join(args[2:]))
+            print(f"Invariant saved: {args[1]}")
+            return True
+
+        if subcommand in {"forget", "remove"}:
+            if len(args) != 2:
+                print("Usage: /invariant remove ID")
+                return True
+            agent.forget_invariant(args[1])
+            print(f"Invariant removed: {args[1]}")
+            return True
+    except ValueError as error:
+        print(f"Invariant error: {error}", file=sys.stderr)
+        return True
+
+    print_invariant_usage()
+    return True
+
+
+def print_invariant_usage() -> None:
+    print("Usage: /invariant show")
+    print("       /invariant add ID TEXT")
+    print("       /invariant remove ID")
 
 
 def split_command(message: str) -> list[str]:
