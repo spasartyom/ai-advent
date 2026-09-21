@@ -30,6 +30,7 @@ Week 3 has started:
   long-term memory
 - `w3_d2` / Day 12 - user profile personalization connected to every request
 - `w3_d3` / Day 13 - formal task state with stage, current step, expected action, and pause/resume
+- `w3_d4` / Day 14 - separate invariants that are included in every request and can trigger refusal
 
 ## Current Product Shape
 
@@ -77,6 +78,7 @@ Responsibilities:
   updates;
 - support `/profile ...` commands for explicit user profile personalization;
 - support `/task ...` commands for explicit task state updates;
+- support `/invariant ...` commands for explicit invariant management;
 - expose `--context-strategy full|summary|sliding-window|facts|branch`,
   `--keep-last`, and `--branch`;
 - support `/checkpoint` and `/branch ...` commands for branching experiments.
@@ -97,11 +99,14 @@ Responsibilities:
 - load working and long-term memory layers when configured;
 - load the user profile when configured;
 - load task state when configured;
+- load invariants when configured;
 - accept a user message through `Agent.run_turn`;
 - prepare the message list through the selected context strategy;
 - prepend the user profile to each request when present;
 - prepend task state to each request when present;
+- prepend invariants to each request when present;
 - prepend explicit working and long-term memory to each request when present;
+- refuse explicit requests to violate a named invariant before calling the model;
 - call the low-level chat helper;
 - append the assistant response;
 - compress old context when the selected strategy requires it;
@@ -138,11 +143,11 @@ Current implementation:
 
 - `JsonFileMemory` stores messages and state in a JSON file with the shape
   `{"summary": "...", "facts": {...}, "working_memory": {...},
-  "long_term_memory": {...}, "user_profile": {...}, "task_state": {...}, "messages": [...], "branches": {...},
+  "long_term_memory": {...}, "user_profile": {...}, "task_state": {...}, "invariants": {...}, "messages": [...], "branches": {...},
   "checkpoints": {...}, "current_branch": "main"}`;
 - missing files load as empty history;
 - old files without `summary` load with an empty summary;
-- old files without facts/working memory/long-term memory/user profile/task state/branches/checkpoints
+- old files without facts/working memory/long-term memory/user profile/task state/invariants/branches/checkpoints
   load empty values;
 - invalid message objects raise `ValueError`;
 - parent directories are created automatically on save.
@@ -251,6 +256,22 @@ The CLI commands are:
 - `/task resume`
 - `/task done`
 
+### Week 3 Invariants
+
+Day 14 stores invariants in `invariants`, separate from dialog history, profile, memory layers, and task state.
+
+Invariants are explicit key-value data where the key is a stable id and the value is the rule text.
+
+The invariants are prepended to every model request as a dedicated system message, so the Study Coach Agent must treat them as hard constraints.
+
+The agent also refuses explicit requests to violate a named invariant before calling the model.
+
+The CLI commands are:
+
+- `/invariant show`
+- `/invariant add ID TEXT`
+- `/invariant remove ID`
+
 ### `tests/`
 
 Tests use fake Chat Completions APIs rather than real network calls.
@@ -263,6 +284,7 @@ Current tests cover:
 - explicit working and long-term memory layers;
 - explicit user profile personalization;
 - formal task state with pause/resume;
+- separate invariants and explicit invariant refusal;
 - API usage token reporting;
 - full and summary context strategies;
 - sliding window, sticky facts, and branching context workflows;
