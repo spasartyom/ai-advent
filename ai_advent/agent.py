@@ -7,6 +7,7 @@ from ai_advent.chat import (
 )
 from ai_advent.context import ContextState, ContextStrategy, FullContextStrategy
 from ai_advent.memory import AgentMemory, AgentMemoryState
+from ai_advent.task import TaskState, create_task_state
 from ai_advent.tokens import TokenReport
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -42,6 +43,7 @@ class Agent:
         working_memory: dict[str, str] | None = None,
         long_term_memory: dict[str, str] | None = None,
         user_profile: dict[str, str] | None = None,
+        task_state: TaskState | None = None,
         branch: str | None = None,
     ) -> None:
         self._chat_completions_api = chat_completions_api
@@ -56,6 +58,7 @@ class Agent:
                 working_memory=working_memory,
                 long_term_memory=long_term_memory,
                 user_profile=user_profile,
+                task_state=task_state,
             )
         else:
             memory_state = AgentMemoryState(
@@ -65,6 +68,7 @@ class Agent:
                 working_memory=working_memory or {},
                 long_term_memory=long_term_memory or {},
                 user_profile=user_profile or {},
+                task_state=task_state or create_task_state(),
                 current_branch=branch or "main",
             )
         self._branches = _copy_message_map(memory_state.branches or {})
@@ -80,6 +84,7 @@ class Agent:
         self._working_memory = dict(memory_state.working_memory or {})
         self._long_term_memory = dict(memory_state.long_term_memory or {})
         self._user_profile = dict(memory_state.user_profile or {})
+        self._task_state = memory_state.task_state or create_task_state()
 
     @property
     def messages(self) -> list[Message]:
@@ -104,6 +109,10 @@ class Agent:
     @property
     def user_profile(self) -> dict[str, str]:
         return dict(self._user_profile)
+
+    @property
+    def task_state(self) -> TaskState:
+        return self._task_state
 
     @property
     def current_branch(self) -> str:
@@ -132,6 +141,47 @@ class Agent:
     def forget_profile(self, key: str) -> None:
         self._user_profile.pop(key, None)
         self._save_messages()
+
+    def start_task(self, title: str) -> None:
+        self._task_state = create_task_state(
+            stage="planning",
+            title=title,
+            current_step="Сформировать план учебной задачи.",
+            expected_action="Подготовить или уточнить план.",
+        )
+        self._save_messages()
+
+    def update_task_state(
+        self,
+        *,
+        stage: str | None = None,
+        current_step: str | None = None,
+        expected_action: str | None = None,
+        title: str | None = None,
+        paused: bool | None = None,
+    ) -> None:
+        self._task_state = create_task_state(
+            stage=self._task_state.stage if stage is None else stage,
+            title=self._task_state.title if title is None else title,
+            current_step=(
+                self._task_state.current_step
+                if current_step is None
+                else current_step
+            ),
+            expected_action=(
+                self._task_state.expected_action
+                if expected_action is None
+                else expected_action
+            ),
+            paused=self._task_state.paused if paused is None else paused,
+        )
+        self._save_messages()
+
+    def pause_task(self) -> None:
+        self.update_task_state(paused=True)
+
+    def resume_task(self) -> None:
+        self.update_task_state(paused=False)
 
     def run_turn(
         self,
@@ -182,14 +232,40 @@ class Agent:
         )
         memory_messages = self._build_memory_messages()
         profile_messages = self._build_profile_messages()
+        task_messages = self._build_task_messages()
         if not self._system_prompt:
-            return [*profile_messages, *memory_messages, *context_messages]
+            return [
+                *profile_messages,
+                *task_messages,
+                *memory_messages,
+                *context_messages,
+            ]
 
         return [
             {"role": "system", "content": self._system_prompt},
             *profile_messages,
+            *task_messages,
             *memory_messages,
             *context_messages,
+        ]
+
+    def _build_task_messages(self) -> list[Message]:
+        if self._task_state.stage == "idle" and not self._task_state.title:
+            return []
+
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "Формализованное состояние текущей учебной задачи. "
+                    "Продолжай работу с этого состояния без повторного объяснения уже известных вводных:\n\n"
+                    f"- stage: {self._task_state.stage}\n"
+                    f"- title: {self._task_state.title or '(not set)'}\n"
+                    f"- current_step: {self._task_state.current_step or '(not set)'}\n"
+                    f"- expected_action: {self._task_state.expected_action or '(not set)'}\n"
+                    f"- paused: {self._task_state.paused}"
+                ),
+            }
         ]
 
     def _build_profile_messages(self) -> list[Message]:
@@ -260,6 +336,7 @@ class Agent:
                     working_memory=self._working_memory,
                     long_term_memory=self._long_term_memory,
                     user_profile=self._user_profile,
+                    task_state=self._task_state,
                     branches=self._branches,
                     checkpoints=self._checkpoints,
                     current_branch=self._current_branch,
@@ -322,8 +399,14 @@ def _with_memory_layer_overrides(
     working_memory: dict[str, str] | None,
     long_term_memory: dict[str, str] | None,
     user_profile: dict[str, str] | None,
+    task_state: TaskState | None,
 ) -> AgentMemoryState:
-    if working_memory is None and long_term_memory is None and user_profile is None:
+    if (
+        working_memory is None
+        and long_term_memory is None
+        and user_profile is None
+        and task_state is None
+    ):
         return state
 
     return AgentMemoryState(
@@ -337,6 +420,7 @@ def _with_memory_layer_overrides(
             state.long_term_memory if long_term_memory is None else long_term_memory
         ),
         user_profile=state.user_profile if user_profile is None else user_profile,
+        task_state=state.task_state if task_state is None else task_state,
         branches=state.branches,
         checkpoints=state.checkpoints,
         current_branch=state.current_branch,

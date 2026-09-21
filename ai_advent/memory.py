@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Protocol
 
 from ai_advent.chat import Message
+from ai_advent.task import TaskState, create_task_state, task_state_from_dict
 
 
 @dataclass(frozen=True)
@@ -14,6 +15,7 @@ class AgentMemoryState:
     working_memory: dict[str, str] | None = None
     long_term_memory: dict[str, str] | None = None
     user_profile: dict[str, str] | None = None
+    task_state: TaskState | None = None
     branches: dict[str, list[Message]] | None = None
     checkpoints: dict[str, list[Message]] | None = None
     current_branch: str = "main"
@@ -66,6 +68,10 @@ class JsonFileMemory:
         if not isinstance(user_profile, dict):
             raise ValueError("Memory file user_profile must be an object.")
 
+        task_state = data.get("task_state", {})
+        if not isinstance(task_state, dict):
+            raise ValueError("Memory file task_state must be an object.")
+
         branches = data.get("branches", {})
         if not isinstance(branches, dict):
             raise ValueError("Memory file branches must be an object.")
@@ -85,6 +91,7 @@ class JsonFileMemory:
             working_memory=_validate_string_map(working_memory, "working_memory"),
             long_term_memory=_validate_string_map(long_term_memory, "long_term_memory"),
             user_profile=_validate_string_map(user_profile, "user_profile"),
+            task_state=task_state_from_dict(task_state),
             branches=_validate_message_map(branches, "branch"),
             checkpoints=_validate_message_map(checkpoints, "checkpoint"),
             current_branch=current_branch,
@@ -98,6 +105,7 @@ class JsonFileMemory:
             "working_memory": dict(state.working_memory or {}),
             "long_term_memory": dict(state.long_term_memory or {}),
             "user_profile": dict(state.user_profile or {}),
+            "task_state": (state.task_state or create_task_state()).to_dict(),
             "messages": [message.copy() for message in state.messages],
             "branches": _copy_message_map(state.branches or {}),
             "checkpoints": _copy_message_map(state.checkpoints or {}),

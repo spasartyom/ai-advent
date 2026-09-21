@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from ai_advent.agent import Agent, DEFAULT_SYSTEM_PROMPT
 from ai_advent.context import StickyFactsContextStrategy, SummaryContextStrategy
 from ai_advent.memory import AgentMemoryState, JsonFileMemory
+from ai_advent.task import create_task_state
 
 
 class FakeChatCompletionsAPI:
@@ -415,6 +416,79 @@ class AgentTests(unittest.TestCase):
         self.assertIn("answer_style: concise", concise_profile)
         self.assertIn("answer_style: detailed", detailed_profile)
         self.assertNotEqual(concise_profile, detailed_profile)
+
+    def test_agent_saves_task_state(self) -> None:
+        api = FakeChatCompletionsAPI()
+
+        with TemporaryDirectory() as directory:
+            memory = JsonFileMemory(Path(directory) / "memory.json")
+            agent = Agent(api, "test-model", memory=memory)
+
+            agent.start_task("Learn Python decorators")
+            agent.update_task_state(
+                stage="execution",
+                current_step="Solve logging decorator exercise",
+                expected_action="Submit solution",
+            )
+
+            state = memory.load_state().task_state
+            self.assertEqual(
+                state,
+                create_task_state(
+                    stage="execution",
+                    title="Learn Python decorators",
+                    current_step="Solve logging decorator exercise",
+                    expected_action="Submit solution",
+                ),
+            )
+
+    def test_agent_includes_task_state_in_request(self) -> None:
+        api = FakeChatCompletionsAPI()
+        agent = Agent(
+            api,
+            "test-model",
+            task_state=create_task_state(
+                stage="execution",
+                title="Learn decorators",
+                current_step="Solve logging decorator exercise",
+                expected_action="Submit solution",
+            ),
+        )
+
+        agent.run_turn("Continue")
+
+        messages = api.requests[0]["messages"]
+        self.assertIn("Формализованное состояние", messages[1]["content"])
+        self.assertIn("stage: execution", messages[1]["content"])
+        self.assertIn("current_step: Solve logging decorator exercise", messages[1]["content"])
+        self.assertEqual(messages[2], {"role": "user", "content": "Continue"})
+
+    def test_agent_resumes_paused_task_state_from_memory(self) -> None:
+        api = FakeChatCompletionsAPI()
+
+        with TemporaryDirectory() as directory:
+            memory = JsonFileMemory(Path(directory) / "memory.json")
+            memory.save_state(
+                AgentMemoryState(
+                    messages=[],
+                    task_state=create_task_state(
+                        stage="validation",
+                        title="Learn decorators",
+                        current_step="Review submitted solution",
+                        expected_action="Give feedback",
+                        paused=True,
+                    ),
+                )
+            )
+            agent = Agent(api, "test-model", memory=memory)
+
+            agent.resume_task()
+            agent.run_turn("Continue")
+
+            self.assertFalse(memory.load_state().task_state.paused)
+            task_message = api.requests[0]["messages"][1]["content"]
+            self.assertIn("stage: validation", task_message)
+            self.assertIn("current_step: Review submitted solution", task_message)
 
     def test_agent_creates_and_switches_branches_from_checkpoint(self) -> None:
         api = FakeChatCompletionsAPI()

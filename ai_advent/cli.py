@@ -79,6 +79,9 @@ def run_agent(
         if handle_profile_command(agent, message):
             continue
 
+        if handle_task_command(agent, message):
+            continue
+
         if not message:
             continue
 
@@ -210,6 +213,123 @@ def print_profile_usage() -> None:
     print("Usage: /profile show")
     print("       /profile set KEY VALUE")
     print("       /profile forget KEY")
+
+
+def handle_task_command(agent: Agent, message: str) -> bool:
+    parts = split_command(message)
+    if not parts or parts[0].lower() != "/task":
+        return False
+
+    args = parts[1:]
+    if not args:
+        print_task_usage()
+        return True
+
+    subcommand = args[0].lower()
+    try:
+        if subcommand == "status":
+            if len(args) != 1:
+                print_task_usage()
+                return True
+            print_task_state(agent)
+            return True
+
+        if subcommand == "start":
+            if len(args) < 2:
+                print("Usage: /task start TITLE")
+                return True
+            agent.start_task(" ".join(args[1:]))
+            print_task_state(agent)
+            return True
+
+        if subcommand == "stage":
+            if len(args) != 2:
+                print("Usage: /task stage idle|planning|execution|validation|done")
+                return True
+            agent.update_task_state(stage=args[1])
+            print_task_state(agent)
+            return True
+
+        if subcommand == "step":
+            if len(args) < 2:
+                print("Usage: /task step CURRENT_STEP")
+                return True
+            agent.update_task_state(current_step=" ".join(args[1:]))
+            print_task_state(agent)
+            return True
+
+        if subcommand == "expect":
+            if len(args) < 2:
+                print("Usage: /task expect EXPECTED_ACTION")
+                return True
+            agent.update_task_state(expected_action=" ".join(args[1:]))
+            print_task_state(agent)
+            return True
+
+        if subcommand == "title":
+            if len(args) < 2:
+                print("Usage: /task title TITLE")
+                return True
+            agent.update_task_state(title=" ".join(args[1:]))
+            print_task_state(agent)
+            return True
+
+        if subcommand == "pause":
+            if len(args) != 1:
+                print_task_usage()
+                return True
+            agent.pause_task()
+            print_task_state(agent)
+            return True
+
+        if subcommand == "resume":
+            if len(args) != 1:
+                print_task_usage()
+                return True
+            agent.resume_task()
+            print_task_state(agent)
+            return True
+
+        if subcommand == "done":
+            if len(args) != 1:
+                print_task_usage()
+                return True
+            agent.update_task_state(
+                stage="done",
+                current_step="Задача завершена.",
+                expected_action="Нет ожидаемого действия.",
+                paused=False,
+            )
+            print_task_state(agent)
+            return True
+    except ValueError as error:
+        print(f"Task error: {error}", file=sys.stderr)
+        return True
+
+    print_task_usage()
+    return True
+
+
+def print_task_usage() -> None:
+    print("Usage: /task status")
+    print("       /task start TITLE")
+    print("       /task stage idle|planning|execution|validation|done")
+    print("       /task step CURRENT_STEP")
+    print("       /task expect EXPECTED_ACTION")
+    print("       /task title TITLE")
+    print("       /task pause")
+    print("       /task resume")
+    print("       /task done")
+
+
+def print_task_state(agent: Agent) -> None:
+    task_state = agent.task_state
+    print("Task state:")
+    print(f"  stage: {task_state.stage}")
+    print(f"  title: {task_state.title or '(not set)'}")
+    print(f"  current_step: {task_state.current_step or '(not set)'}")
+    print(f"  expected_action: {task_state.expected_action or '(not set)'}")
+    print(f"  paused: {task_state.paused}")
 
 
 def split_command(message: str) -> list[str]:
