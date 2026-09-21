@@ -425,8 +425,8 @@ class AgentTests(unittest.TestCase):
             agent = Agent(api, "test-model", memory=memory)
 
             agent.start_task("Learn Python decorators")
+            agent.approve_task()
             agent.update_task_state(
-                stage="execution",
                 current_step="Solve logging decorator exercise",
                 expected_action="Submit solution",
             )
@@ -441,6 +441,59 @@ class AgentTests(unittest.TestCase):
                     expected_action="Submit solution",
                 ),
             )
+
+    def test_agent_rejects_execution_before_plan_approval(self) -> None:
+        api = FakeChatCompletionsAPI()
+        agent = Agent(api, "test-model")
+
+        agent.start_task("Learn Python decorators")
+
+        with self.assertRaises(ValueError) as error:
+            agent.update_task_state(stage="execution")
+
+        self.assertIn("before the plan is approved", str(error.exception))
+        self.assertEqual(agent.task_state.stage, "planning")
+
+    def test_agent_rejects_done_before_validation(self) -> None:
+        api = FakeChatCompletionsAPI()
+        agent = Agent(api, "test-model")
+
+        agent.start_task("Learn Python decorators")
+        agent.approve_task()
+
+        with self.assertRaises(ValueError) as error:
+            agent.update_task_state(stage="done")
+
+        self.assertIn("Cannot transition task from execution to done", str(error.exception))
+        self.assertEqual(agent.task_state.stage, "execution")
+
+    def test_agent_allows_done_after_validation(self) -> None:
+        api = FakeChatCompletionsAPI()
+        agent = Agent(api, "test-model")
+
+        agent.start_task("Learn Python decorators")
+        agent.approve_task()
+        agent.update_task_state(stage="validation")
+        agent.update_task_state(stage="done")
+
+        self.assertEqual(agent.task_state.stage, "done")
+
+    def test_agent_preserves_controlled_lifecycle_after_pause(self) -> None:
+        api = FakeChatCompletionsAPI()
+
+        with TemporaryDirectory() as directory:
+            memory = JsonFileMemory(Path(directory) / "memory.json")
+            agent = Agent(api, "test-model", memory=memory)
+            agent.start_task("Learn Python decorators")
+            agent.pause_task()
+
+            resumed_agent = Agent(api, "test-model", memory=memory)
+            resumed_agent.resume_task()
+
+            with self.assertRaises(ValueError):
+                resumed_agent.update_task_state(stage="execution")
+
+            self.assertEqual(resumed_agent.task_state.stage, "planning")
 
     def test_agent_includes_task_state_in_request(self) -> None:
         api = FakeChatCompletionsAPI()

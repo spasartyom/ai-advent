@@ -1,6 +1,6 @@
 import io
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from types import SimpleNamespace
 
 from ai_advent.cli import (
@@ -20,7 +20,7 @@ from ai_advent.context import (
     StickyFactsContextStrategy,
     SummaryContextStrategy,
 )
-from ai_advent.task import create_task_state
+from ai_advent.task import create_task_state, validate_task_transition
 from ai_advent.tokens import TokenReport
 
 
@@ -56,6 +56,7 @@ class FakeAgent:
         self.user_profile.pop(key, None)
 
     def start_task(self, title: str) -> None:
+        validate_task_transition(self.task_state.stage, "planning")
         self.task_state = create_task_state(
             stage="planning",
             title=title,
@@ -72,8 +73,10 @@ class FakeAgent:
         title: str | None = None,
         paused: bool | None = None,
     ) -> None:
+        next_stage = self.task_state.stage if stage is None else stage
+        validate_task_transition(self.task_state.stage, next_stage)
         self.task_state = create_task_state(
-            stage=self.task_state.stage if stage is None else stage,
+            stage=next_stage,
             title=self.task_state.title if title is None else title,
             current_step=(
                 self.task_state.current_step
@@ -86,6 +89,20 @@ class FakeAgent:
                 else expected_action
             ),
             paused=self.task_state.paused if paused is None else paused,
+        )
+
+    def approve_task(self) -> None:
+        validate_task_transition(
+            self.task_state.stage,
+            "execution",
+            approved=True,
+        )
+        self.task_state = create_task_state(
+            stage="execution",
+            title=self.task_state.title,
+            current_step="Выполнить утвержденный план.",
+            expected_action="Продолжить выполнение задачи.",
+            paused=False,
         )
 
     def pause_task(self) -> None:
@@ -304,7 +321,7 @@ class CliTests(unittest.TestCase):
 
         with redirect_stdout(output):
             handle_task_command(agent, "/task start decorators")
-            handle_task_command(agent, "/task stage execution")
+            handle_task_command(agent, "/task approve")
             handle_task_command(agent, '/task step "Solve exercise"')
             handled = handle_task_command(agent, '/task expect "Submit solution"')
 
@@ -312,6 +329,33 @@ class CliTests(unittest.TestCase):
         self.assertEqual(agent.task_state.stage, "execution")
         self.assertEqual(agent.task_state.current_step, "Solve exercise")
         self.assertEqual(agent.task_state.expected_action, "Submit solution")
+
+    def test_task_command_rejects_execution_before_approval(self) -> None:
+        agent = FakeAgent()
+        output = io.StringIO()
+        errors = io.StringIO()
+
+        with redirect_stdout(output), redirect_stderr(errors):
+            handle_task_command(agent, "/task start decorators")
+            handled = handle_task_command(agent, "/task stage execution")
+
+        self.assertTrue(handled)
+        self.assertEqual(agent.task_state.stage, "planning")
+        self.assertIn("before the plan is approved", errors.getvalue())
+
+    def test_task_command_rejects_done_before_validation(self) -> None:
+        agent = FakeAgent()
+        output = io.StringIO()
+        errors = io.StringIO()
+
+        with redirect_stdout(output), redirect_stderr(errors):
+            handle_task_command(agent, "/task start decorators")
+            handle_task_command(agent, "/task approve")
+            handled = handle_task_command(agent, "/task done")
+
+        self.assertTrue(handled)
+        self.assertEqual(agent.task_state.stage, "execution")
+        self.assertIn("Cannot transition task from execution to done", errors.getvalue())
 
     def test_task_command_pauses_and_resumes_task(self) -> None:
         agent = FakeAgent()

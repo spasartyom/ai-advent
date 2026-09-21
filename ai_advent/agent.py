@@ -7,7 +7,7 @@ from ai_advent.chat import (
 )
 from ai_advent.context import ContextState, ContextStrategy, FullContextStrategy
 from ai_advent.memory import AgentMemory, AgentMemoryState
-from ai_advent.task import TaskState, create_task_state
+from ai_advent.task import TaskState, create_task_state, validate_task_transition
 from ai_advent.tokens import TokenReport
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -151,6 +151,7 @@ class Agent:
         self._save_messages()
 
     def start_task(self, title: str) -> None:
+        validate_task_transition(self._task_state.stage, "planning")
         self._task_state = create_task_state(
             stage="planning",
             title=title,
@@ -168,8 +169,10 @@ class Agent:
         title: str | None = None,
         paused: bool | None = None,
     ) -> None:
+        next_stage = self._task_state.stage if stage is None else stage
+        validate_task_transition(self._task_state.stage, next_stage)
         self._task_state = create_task_state(
-            stage=self._task_state.stage if stage is None else stage,
+            stage=next_stage,
             title=self._task_state.title if title is None else title,
             current_step=(
                 self._task_state.current_step
@@ -182,6 +185,21 @@ class Agent:
                 else expected_action
             ),
             paused=self._task_state.paused if paused is None else paused,
+        )
+        self._save_messages()
+
+    def approve_task(self) -> None:
+        validate_task_transition(
+            self._task_state.stage,
+            "execution",
+            approved=True,
+        )
+        self._task_state = create_task_state(
+            stage="execution",
+            title=self._task_state.title,
+            current_step="Выполнить утвержденный план.",
+            expected_action="Продолжить выполнение задачи.",
+            paused=False,
         )
         self._save_messages()
 

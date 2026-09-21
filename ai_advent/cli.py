@@ -253,6 +253,14 @@ def handle_task_command(agent: Agent, message: str) -> bool:
             print_task_state(agent)
             return True
 
+        if subcommand == "approve":
+            if len(args) != 1:
+                print_task_usage()
+                return True
+            agent.approve_task()
+            print_task_state(agent)
+            return True
+
         if subcommand == "step":
             if len(args) < 2:
                 print("Usage: /task step CURRENT_STEP")
@@ -317,6 +325,7 @@ def print_task_usage() -> None:
     print("Usage: /task status")
     print("       /task start TITLE")
     print("       /task stage idle|planning|execution|validation|done")
+    print("       /task approve")
     print("       /task step CURRENT_STEP")
     print("       /task expect EXPECTED_ACTION")
     print("       /task title TITLE")
