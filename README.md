@@ -318,3 +318,40 @@ ai-advent agent --memory-file .ai-advent/profile-detailed.json
 ```
 
 Один и тот же запрос должен учитывать профиль автоматически: язык, стиль ответа, формат и ограничения.
+
+### День 13: состояние задачи
+
+Агент получил формализованное состояние текущей учебной задачи.
+
+Состояние хранится в поле `task_state` отдельно от диалога, профиля и слоев памяти.
+
+Поля состояния:
+
+- `stage` - этап задачи: `idle`, `planning`, `execution`, `validation`, `done`;
+- `title` - название текущей задачи;
+- `current_step` - текущий шаг;
+- `expected_action` - ожидаемое действие;
+- `paused` - признак паузы.
+
+Команды:
+
+```text
+/task start "Learn Python decorators"
+/task status
+/task stage execution
+/task step "Solve logging decorator exercise"
+/task expect "Submit solution"
+/task pause
+/task resume
+/task done
+```
+
+Состояние задачи сохраняется в JSON-файле и добавляется к каждому запросу отдельным system-блоком.
+
+Для проверки паузы можно запустить агент, создать задачу, поставить ее на паузу, выйти и запустить тот же memory-файл снова:
+
+```bash
+ai-advent agent --memory-file .ai-advent/w3-d3-task.json
+```
+
+После `/task resume` и сообщения `Продолжим` агент должен видеть прежний этап, текущий шаг и ожидаемое действие без повторной настройки.

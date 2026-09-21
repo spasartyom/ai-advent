@@ -8,6 +8,7 @@ from ai_advent.cli import (
     handle_branch_command,
     handle_memory_command,
     handle_profile_command,
+    handle_task_command,
     parse_args,
     read_paste_block,
     run_agent,
@@ -18,6 +19,7 @@ from ai_advent.context import (
     StickyFactsContextStrategy,
     SummaryContextStrategy,
 )
+from ai_advent.task import create_task_state
 from ai_advent.tokens import TokenReport
 
 
@@ -27,6 +29,7 @@ class FakeAgent:
         self.working_memory: dict[str, str] = {}
         self.long_term_memory: dict[str, str] = {}
         self.user_profile: dict[str, str] = {}
+        self.task_state = create_task_state()
 
     def run_turn(self, message: str) -> object:
         self.messages.append(message)
@@ -49,6 +52,45 @@ class FakeAgent:
 
     def forget_profile(self, key: str) -> None:
         self.user_profile.pop(key, None)
+
+    def start_task(self, title: str) -> None:
+        self.task_state = create_task_state(
+            stage="planning",
+            title=title,
+            current_step="Сформировать план учебной задачи.",
+            expected_action="Подготовить или уточнить план.",
+        )
+
+    def update_task_state(
+        self,
+        *,
+        stage: str | None = None,
+        current_step: str | None = None,
+        expected_action: str | None = None,
+        title: str | None = None,
+        paused: bool | None = None,
+    ) -> None:
+        self.task_state = create_task_state(
+            stage=self.task_state.stage if stage is None else stage,
+            title=self.task_state.title if title is None else title,
+            current_step=(
+                self.task_state.current_step
+                if current_step is None
+                else current_step
+            ),
+            expected_action=(
+                self.task_state.expected_action
+                if expected_action is None
+                else expected_action
+            ),
+            paused=self.task_state.paused if paused is None else paused,
+        )
+
+    def pause_task(self) -> None:
+        self.update_task_state(paused=True)
+
+    def resume_task(self) -> None:
+        self.update_task_state(paused=False)
 
 
 class CliTests(unittest.TestCase):
@@ -235,6 +277,57 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(agent.messages, [])
         self.assertEqual(agent.user_profile, {"language": "ru"})
+
+    def test_task_command_starts_task(self) -> None:
+        agent = FakeAgent()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            handled = handle_task_command(agent, '/task start "Learn decorators"')
+
+        self.assertTrue(handled)
+        self.assertEqual(agent.task_state.stage, "planning")
+        self.assertEqual(agent.task_state.title, "Learn decorators")
+        self.assertIn("Task state:", output.getvalue())
+
+    def test_task_command_updates_stage_step_and_expected_action(self) -> None:
+        agent = FakeAgent()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            handle_task_command(agent, "/task start decorators")
+            handle_task_command(agent, "/task stage execution")
+            handle_task_command(agent, '/task step "Solve exercise"')
+            handled = handle_task_command(agent, '/task expect "Submit solution"')
+
+        self.assertTrue(handled)
+        self.assertEqual(agent.task_state.stage, "execution")
+        self.assertEqual(agent.task_state.current_step, "Solve exercise")
+        self.assertEqual(agent.task_state.expected_action, "Submit solution")
+
+    def test_task_command_pauses_and_resumes_task(self) -> None:
+        agent = FakeAgent()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            handle_task_command(agent, "/task start decorators")
+            handle_task_command(agent, "/task pause")
+            self.assertTrue(agent.task_state.paused)
+            handled = handle_task_command(agent, "/task resume")
+
+        self.assertTrue(handled)
+        self.assertFalse(agent.task_state.paused)
+
+    def test_run_agent_handles_task_command_without_model_turn(self) -> None:
+        agent = FakeAgent()
+        inputs = iter(['/task start "Learn decorators"', "/exit"])
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            run_agent(agent, "test-model", None, read_input=lambda _: next(inputs))
+
+        self.assertEqual(agent.messages, [])
+        self.assertEqual(agent.task_state.title, "Learn decorators")
 
     def test_run_agent_reads_user_messages_until_exit(self) -> None:
         agent = FakeAgent()

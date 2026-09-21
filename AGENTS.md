@@ -29,6 +29,7 @@ Week 3 has started:
 - `w3_d1` / Day 11 - explicit memory layers for short-term, working, and
   long-term memory
 - `w3_d2` / Day 12 - user profile personalization connected to every request
+- `w3_d3` / Day 13 - formal task state with stage, current step, expected action, and pause/resume
 
 ## Current Product Shape
 
@@ -75,6 +76,7 @@ Responsibilities:
 - support `/memory ...` commands for explicit working and long-term memory
   updates;
 - support `/profile ...` commands for explicit user profile personalization;
+- support `/task ...` commands for explicit task state updates;
 - expose `--context-strategy full|summary|sliding-window|facts|branch`,
   `--keep-last`, and `--branch`;
 - support `/checkpoint` and `/branch ...` commands for branching experiments.
@@ -94,9 +96,11 @@ Responsibilities:
 - load facts, branches, and checkpoints from memory when configured;
 - load working and long-term memory layers when configured;
 - load the user profile when configured;
+- load task state when configured;
 - accept a user message through `Agent.run_turn`;
 - prepare the message list through the selected context strategy;
 - prepend the user profile to each request when present;
+- prepend task state to each request when present;
 - prepend explicit working and long-term memory to each request when present;
 - call the low-level chat helper;
 - append the assistant response;
@@ -134,11 +138,11 @@ Current implementation:
 
 - `JsonFileMemory` stores messages and state in a JSON file with the shape
   `{"summary": "...", "facts": {...}, "working_memory": {...},
-  "long_term_memory": {...}, "user_profile": {...}, "messages": [...], "branches": {...},
+  "long_term_memory": {...}, "user_profile": {...}, "task_state": {...}, "messages": [...], "branches": {...},
   "checkpoints": {...}, "current_branch": "main"}`;
 - missing files load as empty history;
 - old files without `summary` load with an empty summary;
-- old files without facts/working memory/long-term memory/user profile/branches/checkpoints
+- old files without facts/working memory/long-term memory/user profile/task state/branches/checkpoints
   load empty values;
 - invalid message objects raise `ValueError`;
 - parent directories are created automatically on save.
@@ -185,6 +189,17 @@ Branching is managed by `Agent` rather than by a separate context strategy:
 while `/checkpoint` and `/branch ...` commands switch the message history that
 the agent reads and writes.
 
+### `ai_advent/task.py`
+
+Formal task state for Study Coach sessions.
+
+Responsibilities:
+
+- define `TaskState`;
+- validate allowed task stages: `idle`, `planning`, `execution`, `validation`, `done`;
+- convert task state to and from the JSON memory shape;
+- keep transition validation light for Day 13, leaving controlled transition rules for Day 15.
+
 ### Week 3 Memory Layers
 
 Day 11 uses a Study Coach framing:
@@ -216,6 +231,26 @@ The CLI commands are:
 - `/profile set KEY VALUE`
 - `/profile forget KEY`
 
+### Week 3 Task State
+
+Day 13 stores task state in `task_state`, separate from dialog history, profile, and memory layers.
+
+Task state includes `stage`, `title`, `current_step`, `expected_action`, and `paused`.
+
+The task state is prepended to every model request as a dedicated system message, so the Study Coach Agent can continue after a pause without repeating setup.
+
+The CLI commands are:
+
+- `/task status`
+- `/task start TITLE`
+- `/task stage idle|planning|execution|validation|done`
+- `/task step CURRENT_STEP`
+- `/task expect EXPECTED_ACTION`
+- `/task title TITLE`
+- `/task pause`
+- `/task resume`
+- `/task done`
+
 ### `tests/`
 
 Tests use fake Chat Completions APIs rather than real network calls.
@@ -227,6 +262,7 @@ Current tests cover:
 - JSON-backed persistent memory;
 - explicit working and long-term memory layers;
 - explicit user profile personalization;
+- formal task state with pause/resume;
 - API usage token reporting;
 - full and summary context strategies;
 - sliding window, sticky facts, and branching context workflows;
