@@ -31,6 +31,7 @@ Week 3 has started:
 - `w3_d2` / Day 12 - user profile personalization connected to every request
 - `w3_d3` / Day 13 - formal task state with stage, current step, expected action, and pause/resume
 - `w3_d4` / Day 14 - separate invariants that are included in every request and can trigger refusal
+- `w3_d5` / Day 15 - controlled task lifecycle transitions
 
 ## Current Product Shape
 
@@ -107,6 +108,7 @@ Responsibilities:
 - prepend invariants to each request when present;
 - prepend explicit working and long-term memory to each request when present;
 - refuse explicit requests to violate a named invariant before calling the model;
+- enforce controlled task state transitions;
 - call the low-level chat helper;
 - append the assistant response;
 - compress old context when the selected strategy requires it;
@@ -202,8 +204,10 @@ Responsibilities:
 
 - define `TaskState`;
 - validate allowed task stages: `idle`, `planning`, `execution`, `validation`, `done`;
+- define allowed lifecycle transitions;
+- require explicit plan approval before `planning -> execution`;
+- reject final `done` before `validation`;
 - convert task state to and from the JSON memory shape;
-- keep transition validation light for Day 13, leaving controlled transition rules for Day 15.
 
 ### Week 3 Memory Layers
 
@@ -249,12 +253,25 @@ The CLI commands are:
 - `/task status`
 - `/task start TITLE`
 - `/task stage idle|planning|execution|validation|done`
+- `/task approve`
 - `/task step CURRENT_STEP`
 - `/task expect EXPECTED_ACTION`
 - `/task title TITLE`
 - `/task pause`
 - `/task resume`
 - `/task done`
+
+### Week 3 Controlled Transitions
+
+Day 15 enforces task lifecycle transitions in code.
+
+Allowed transitions are `idle -> planning`, `planning -> execution` through `/task approve`, `execution -> validation`, `validation -> execution`, `validation -> done`, and `done -> planning`.
+
+Direct `planning -> execution` through `/task stage execution` is rejected because the plan has not been approved.
+
+Direct `execution -> done` is rejected because final completion requires validation first.
+
+Pause and resume preserve the current stage and do not bypass transition rules.
 
 ### Week 3 Invariants
 
@@ -285,6 +302,7 @@ Current tests cover:
 - explicit user profile personalization;
 - formal task state with pause/resume;
 - separate invariants and explicit invariant refusal;
+- controlled task lifecycle transitions;
 - API usage token reporting;
 - full and summary context strategies;
 - sliding window, sticky facts, and branching context workflows;
