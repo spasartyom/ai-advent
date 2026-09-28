@@ -16,6 +16,7 @@ from ai_advent.context import (
 )
 from ai_advent.memory import JsonFileMemory
 from ai_advent.mcp_client import McpTool, McpToolResult, call_tool_sync, list_tools_sync
+from ai_advent.pipeline import PipelineResult, run_study_note_pipeline
 from ai_advent.scheduler import DEFAULT_SCHEDULER_FILE
 from ai_advent.tokens import TokenReport
 
@@ -40,6 +41,7 @@ BASE_URL_ENV = "AI_ADVENT_BASE_URL"
 MODEL_ENV = "AI_ADVENT_MODEL"
 MEMORY_FILE_ENV = "AI_ADVENT_MEMORY_FILE"
 SCHEDULER_FILE_ENV = "AI_ADVENT_SCHEDULER_FILE"
+NOTES_DIR_ENV = "AI_ADVENT_NOTES_DIR"
 DEFAULT_MEMORY_FILE = ".ai-advent/agent-memory.json"
 DEFAULT_CONTEXT_STRATEGY = "full"
 DEFAULT_KEEP_LAST = 10
@@ -94,6 +96,9 @@ def run_agent(
             continue
 
         if handle_reminder_command(message):
+            continue
+
+        if handle_note_command(message):
             continue
 
         if not message:
@@ -199,6 +204,33 @@ def handle_reminder_command(message: str) -> bool:
         return True
 
     print_mcp_tool_result(result)
+    return True
+
+
+def handle_note_command(message: str) -> bool:
+    parts = split_command(message)
+    if not parts or parts[0].lower() != "/note":
+        return False
+
+    if len(parts) < 2:
+        print("Usage: /note QUERY")
+        return True
+
+    query = " ".join(parts[1:])
+    try:
+        result = run_study_note_pipeline(
+            query,
+            caller=lambda tool_name, arguments: call_tool_sync(
+                tool_name,
+                arguments,
+                env=build_mcp_env(),
+            ),
+        )
+    except (RuntimeError, ValueError) as error:
+        print(f"Pipeline error: {error}", file=sys.stderr)
+        return True
+
+    print_pipeline_result(result)
     return True
 
 
@@ -681,6 +713,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="JSON file used by local scheduler MCP tools",
     )
+    list_tools_parser.add_argument(
+        "--notes-dir",
+        default=None,
+        help="directory used by local note-saving MCP tools",
+    )
     call_tool_parser = mcp_subparsers.add_parser(
         "call-tool",
         help="connect to an MCP server and call a tool",
@@ -705,6 +742,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--scheduler-file",
         default=None,
         help="JSON file used by local scheduler MCP tools",
+    )
+    call_tool_parser.add_argument(
+        "--notes-dir",
+        default=None,
+        help="directory used by local note-saving MCP tools",
+    )
+    pipeline_parser = mcp_subparsers.add_parser(
+        "run-pipeline",
+        help="run the study note MCP tool pipeline",
+    )
+    pipeline_parser.add_argument("query", help="lesson query for the pipeline")
+    pipeline_parser.add_argument(
+        "--notes-dir",
+        default=None,
+        help="directory used by local note-saving MCP tools",
+    )
+    pipeline_parser.add_argument(
+        "--server-command",
+        default=None,
+        help="stdio server command. Defaults to the local AI Advent study server.",
     )
 
     worker_parser = subparsers.add_parser(
@@ -797,7 +854,10 @@ def run_mcp_command(args: argparse.Namespace) -> None:
             tools = list_tools_sync(
                 url=args.url,
                 command=command,
-                env=build_mcp_env(args.scheduler_file),
+                env=build_mcp_env(
+                    scheduler_file=args.scheduler_file,
+                    notes_dir=args.notes_dir,
+                ),
             )
         except (RuntimeError, ValueError) as error:
             print(f"MCP error: {error}", file=sys.stderr)
@@ -815,7 +875,10 @@ def run_mcp_command(args: argparse.Namespace) -> None:
                 arguments,
                 url=args.url,
                 command=command,
-                env=build_mcp_env(args.scheduler_file),
+                env=build_mcp_env(
+                    scheduler_file=args.scheduler_file,
+                    notes_dir=args.notes_dir,
+                ),
             )
         except (RuntimeError, ValueError, json.JSONDecodeError) as error:
             print(f"MCP error: {error}", file=sys.stderr)
@@ -824,11 +887,31 @@ def run_mcp_command(args: argparse.Namespace) -> None:
         print_mcp_tool_result(result)
         return
 
+    if args.mcp_command == "run-pipeline":
+        command = split_command(args.server_command) if args.server_command else None
+        env = build_mcp_env(notes_dir=args.notes_dir)
+        try:
+            result = run_study_note_pipeline(
+                args.query,
+                caller=lambda tool_name, arguments: call_tool_sync(
+                    tool_name,
+                    arguments,
+                    command=command,
+                    env=env,
+                ),
+            )
+        except (RuntimeError, ValueError) as error:
+            print(f"Pipeline error: {error}", file=sys.stderr)
+            raise SystemExit(1) from error
+
+        print_pipeline_result(result)
+        return
+
     if args.mcp_command is None:
-        print("Usage: ai-advent mcp list-tools|call-tool ...")
+        print("Usage: ai-advent mcp list-tools|call-tool|run-pipeline ...")
         raise SystemExit(2)
 
-    print("Usage: ai-advent mcp list-tools|call-tool ...")
+    print("Usage: ai-advent mcp list-tools|call-tool|run-pipeline ...")
     raise SystemExit(2)
 
 
@@ -868,11 +951,18 @@ def run_worker(args: argparse.Namespace) -> None:
             return
 
 
-def build_mcp_env(scheduler_file: str | None = None) -> dict[str, str]:
-    path = scheduler_file or os.getenv(SCHEDULER_FILE_ENV)
-    if path is None:
-        return {}
-    return {SCHEDULER_FILE_ENV: path}
+def build_mcp_env(
+    scheduler_file: str | None = None,
+    notes_dir: str | None = None,
+) -> dict[str, str]:
+    env: dict[str, str] = {}
+    scheduler_path = scheduler_file or os.getenv(SCHEDULER_FILE_ENV)
+    if scheduler_path is not None:
+        env[SCHEDULER_FILE_ENV] = scheduler_path
+    notes_path = notes_dir or os.getenv(NOTES_DIR_ENV)
+    if notes_path is not None:
+        env[NOTES_DIR_ENV] = notes_path
+    return env
 
 
 def parse_tool_arguments(raw_arguments: str) -> dict[str, object]:
@@ -905,6 +995,15 @@ def print_mcp_tool_result(result: McpToolResult) -> None:
         print("  content:")
         for line in result.content_text.splitlines():
             print(f"    {line}")
+
+
+def print_pipeline_result(result: PipelineResult) -> None:
+    print(f"MCP pipeline: study note for {result.query}")
+    for index, step in enumerate(result.steps, start=1):
+        print(f"{index}. {step.tool_name}")
+        print(f"   arguments: {step.arguments}")
+        print(f"   is_error: {step.result.is_error}")
+    print(f"Saved note: {result.saved_path}")
 
 
 def build_context_strategy(
