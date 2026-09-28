@@ -655,3 +655,71 @@ cat /private/tmp/ai-advent-day19-notes/study-note-mcp.md
 ```text
 You: /note mcp
 ```
+
+### День 20: orchestration MCP
+
+Для orchestration сценария Study Coach использует несколько MCP-серверов:
+
+```text
+lessons server   -> list_lessons, get_lesson, search_lessons
+notes server     -> summarize_note, save_note
+scheduler server -> create_reminder, list_reminders, run_due_tasks
+```
+
+Orchestrator регистрирует серверы, собирает список tools, выбирает нужный сервер по имени инструмента и выполняет длинный flow:
+
+```text
+lessons.search_lessons -> notes.summarize_note -> notes.save_note -> scheduler.create_reminder -> scheduler.run_due_tasks
+```
+
+Запуск demo flow:
+
+```bash
+ai-advent mcp orchestrate mcp --notes-dir demo-output/day20-notes --scheduler-file demo-output/day20-scheduler.json --remind-in 0
+```
+
+Ожидаемый результат:
+
+```text
+Registered MCP servers:
+- lessons: get_lesson, list_lessons, search_lessons
+- notes: save_note, summarize_note
+- scheduler: create_reminder, list_reminders, run_due_tasks
+MCP orchestration: study flow for mcp
+1. lessons.search_lessons
+   arguments: {'query': 'mcp'}
+   is_error: False
+2. notes.summarize_note
+   arguments: {'title': 'Study note: mcp', 'content': 'mcp: Model Context Protocol lets an agent discover and call external tools through a standard client-server protocol.'}
+   is_error: False
+3. notes.save_note
+   arguments: {'title': 'Study note: mcp', 'content': '# Study note: mcp...'}
+   is_error: False
+4. scheduler.create_reminder
+   arguments: {'title': 'Review mcp', 'due_in_seconds': 0, 'note': 'Review saved study note: demo-output/day20-notes/study-note-mcp.md'}
+   is_error: False
+5. scheduler.run_due_tasks
+   arguments: {}
+   is_error: False
+Saved note: demo-output/day20-notes/study-note-mcp.md
+Reminder id: ...
+Scheduler summary: Completed 1 due study reminder(s): Review mcp. Pending reminders: 0.
+```
+
+Проверить сохраненную заметку:
+
+```bash
+cat demo-output/day20-notes/study-note-mcp.md
+```
+
+Проверить scheduler JSON:
+
+```bash
+cat demo-output/day20-scheduler.json
+```
+
+Интерактивный агент может запустить тот же flow:
+
+```text
+You: /study-flow mcp
+```
