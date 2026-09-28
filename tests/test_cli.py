@@ -2,15 +2,19 @@ import io
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from ai_advent.cli import (
     build_context_strategy,
     handle_branch_command,
     handle_invariant_command,
+    handle_lesson_command,
     handle_memory_command,
     handle_profile_command,
     handle_task_command,
     parse_args,
+    parse_tool_arguments,
+    print_mcp_tool_result,
     print_mcp_tools,
     read_paste_block,
     run_agent,
@@ -21,7 +25,7 @@ from ai_advent.context import (
     StickyFactsContextStrategy,
     SummaryContextStrategy,
 )
-from ai_advent.mcp_client import McpTool
+from ai_advent.mcp_client import McpTool, McpToolResult
 from ai_advent.task import create_task_state, validate_task_transition
 from ai_advent.tokens import TokenReport
 
@@ -177,6 +181,28 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.url, "http://127.0.0.1:8000/mcp")
         self.assertEqual(args.server_command, "python server.py")
 
+    def test_mcp_call_tool_command_is_available(self) -> None:
+        args = parse_args(
+            [
+                "mcp",
+                "call-tool",
+                "get_lesson",
+                "--arguments",
+                '{"topic": "mcp"}',
+            ]
+        )
+
+        self.assertEqual(args.command, "mcp")
+        self.assertEqual(args.mcp_command, "call-tool")
+        self.assertEqual(args.tool_name, "get_lesson")
+        self.assertEqual(args.arguments, '{"topic": "mcp"}')
+
+    def test_parse_tool_arguments_requires_json_object(self) -> None:
+        self.assertEqual(parse_tool_arguments('{"topic": "mcp"}'), {"topic": "mcp"})
+
+        with self.assertRaises(ValueError):
+            parse_tool_arguments('["mcp"]')
+
     def test_print_mcp_tools_outputs_tool_details(self) -> None:
         output = io.StringIO()
 
@@ -197,6 +223,45 @@ class CliTests(unittest.TestCase):
         self.assertIn("get_lesson: Get study lesson", printed)
         self.assertIn("description: Return a lesson.", printed)
         self.assertIn("input_schema: {'type': 'object'}", printed)
+
+    def test_print_mcp_tool_result_outputs_content(self) -> None:
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            print_mcp_tool_result(
+                McpToolResult(
+                    tool_name="get_lesson",
+                    content_text="MCP lesson",
+                    structured_content=None,
+                    is_error=False,
+                )
+            )
+
+        printed = output.getvalue()
+        self.assertIn("MCP tool result: get_lesson", printed)
+        self.assertIn("is_error: False", printed)
+        self.assertIn("MCP lesson", printed)
+
+    def test_lesson_command_calls_mcp_tool_and_uses_result_in_agent_turn(self) -> None:
+        agent = FakeAgent()
+        output = io.StringIO()
+
+        with patch(
+            "ai_advent.cli.call_tool_sync",
+            return_value=McpToolResult(
+                tool_name="get_lesson",
+                content_text="MCP explains external tools.",
+                structured_content=None,
+                is_error=False,
+            ),
+        ) as call_tool, redirect_stdout(output):
+            handled = handle_lesson_command(agent, "/lesson mcp")
+
+        self.assertTrue(handled)
+        call_tool.assert_called_once_with("get_lesson", {"topic": "mcp"})
+        self.assertEqual(len(agent.messages), 1)
+        self.assertIn("MCP explains external tools.", agent.messages[0])
+        self.assertIn("Assistant: agent answer", output.getvalue())
 
     def test_build_context_strategy_returns_full_strategy(self) -> None:
         self.assertIsInstance(build_context_strategy("full", 10), FullContextStrategy)

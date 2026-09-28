@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import shlex
 import sys
@@ -13,7 +14,7 @@ from ai_advent.context import (
     SummaryContextStrategy,
 )
 from ai_advent.memory import JsonFileMemory
-from ai_advent.mcp_client import McpTool, list_tools_sync
+from ai_advent.mcp_client import McpTool, McpToolResult, call_tool_sync, list_tools_sync
 from ai_advent.tokens import TokenReport
 
 try:
@@ -86,6 +87,9 @@ def run_agent(
         if handle_invariant_command(agent, message):
             continue
 
+        if handle_lesson_command(agent, message, show_tokens=show_tokens):
+            continue
+
         if not message:
             continue
 
@@ -98,6 +102,50 @@ def run_agent(
         print(f"Assistant: {response.text}\n")
         if show_tokens and response.token_report is not None:
             print_token_report(response.token_report)
+
+
+def handle_lesson_command(
+    agent: Agent,
+    message: str,
+    *,
+    show_tokens: bool = False,
+) -> bool:
+    parts = split_command(message)
+    if not parts or parts[0].lower() != "/lesson":
+        return False
+
+    if len(parts) < 2:
+        print("Usage: /lesson TOPIC")
+        return True
+
+    topic = " ".join(parts[1:])
+    try:
+        tool_result = call_tool_sync("get_lesson", {"topic": topic})
+    except (RuntimeError, ValueError) as error:
+        print(f"MCP error: {error}", file=sys.stderr)
+        return True
+
+    print_mcp_tool_result(tool_result)
+    if tool_result.is_error:
+        return True
+
+    prompt = (
+        "Используй результат MCP-инструмента `get_lesson` как учебный материал. "
+        "Кратко объясни тему и предложи один следующий практический шаг.\n\n"
+        f"Тема: {topic}\n"
+        f"MCP result:\n{tool_result.content_text}"
+    )
+    try:
+        response = agent.run_turn(prompt)
+    except APIError as error:
+        print(f"API error: {error}", file=sys.stderr)
+        return True
+
+    print(f"Assistant: {response.text}\n")
+    token_report = getattr(response, "token_report", None)
+    if show_tokens and token_report is not None:
+        print_token_report(token_report)
+    return True
 
 
 def handle_branch_command(agent: Agent, message: str) -> bool:
@@ -574,6 +622,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="stdio server command. Defaults to the local AI Advent study server.",
     )
+    call_tool_parser = mcp_subparsers.add_parser(
+        "call-tool",
+        help="connect to an MCP server and call a tool",
+    )
+    call_tool_parser.add_argument("tool_name", help="MCP tool name to call")
+    call_tool_parser.add_argument(
+        "--arguments",
+        default="{}",
+        help="JSON object with tool arguments",
+    )
+    call_tool_parser.add_argument(
+        "--url",
+        default=None,
+        help="MCP Streamable HTTP URL, for example http://127.0.0.1:8000/mcp",
+    )
+    call_tool_parser.add_argument(
+        "--server-command",
+        default=None,
+        help="stdio server command. Defaults to the local AI Advent study server.",
+    )
 
     return parser.parse_args(argv)
 
@@ -629,18 +697,47 @@ def main() -> None:
 
 
 def run_mcp_command(args: argparse.Namespace) -> None:
-    if args.mcp_command != "list-tools":
-        print("Usage: ai-advent mcp list-tools [--url URL] [--server-command COMMAND]")
+    if args.mcp_command == "list-tools":
+        command = split_command(args.server_command) if args.server_command else None
+        try:
+            tools = list_tools_sync(url=args.url, command=command)
+        except (RuntimeError, ValueError) as error:
+            print(f"MCP error: {error}", file=sys.stderr)
+            raise SystemExit(1) from error
+
+        print_mcp_tools(tools)
+        return
+
+    if args.mcp_command == "call-tool":
+        command = split_command(args.server_command) if args.server_command else None
+        try:
+            arguments = parse_tool_arguments(args.arguments)
+            result = call_tool_sync(
+                args.tool_name,
+                arguments,
+                url=args.url,
+                command=command,
+            )
+        except (RuntimeError, ValueError, json.JSONDecodeError) as error:
+            print(f"MCP error: {error}", file=sys.stderr)
+            raise SystemExit(1) from error
+
+        print_mcp_tool_result(result)
+        return
+
+    if args.mcp_command is None:
+        print("Usage: ai-advent mcp list-tools|call-tool ...")
         raise SystemExit(2)
 
-    command = split_command(args.server_command) if args.server_command else None
-    try:
-        tools = list_tools_sync(url=args.url, command=command)
-    except (RuntimeError, ValueError) as error:
-        print(f"MCP error: {error}", file=sys.stderr)
-        raise SystemExit(1) from error
+    print("Usage: ai-advent mcp list-tools|call-tool ...")
+    raise SystemExit(2)
 
-    print_mcp_tools(tools)
+
+def parse_tool_arguments(raw_arguments: str) -> dict[str, object]:
+    arguments = json.loads(raw_arguments)
+    if not isinstance(arguments, dict):
+        raise ValueError("Tool arguments must be a JSON object.")
+    return arguments
 
 
 def print_mcp_tools(tools: list[McpTool]) -> None:
@@ -655,6 +752,17 @@ def print_mcp_tools(tools: list[McpTool]) -> None:
         if tool.description:
             print(f"  description: {tool.description}")
         print(f"  input_schema: {tool.input_schema}")
+
+
+def print_mcp_tool_result(result: McpToolResult) -> None:
+    print(f"MCP tool result: {result.tool_name}")
+    print(f"  is_error: {result.is_error}")
+    if result.structured_content is not None:
+        print(f"  structured_content: {result.structured_content}")
+    if result.content_text:
+        print("  content:")
+        for line in result.content_text.splitlines():
+            print(f"    {line}")
 
 
 def build_context_strategy(

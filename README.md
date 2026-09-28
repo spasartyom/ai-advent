@@ -487,3 +487,59 @@ ai-advent mcp list-tools --url http://127.0.0.1:8000/mcp
 ```bash
 ai-advent mcp list-tools --server-command "python path/to/server.py"
 ```
+
+### День 17: первый MCP-инструмент
+
+Локальный Study Coach MCP-сервер теперь используется не только для discovery, но и для реального вызова инструмента.
+
+Инструмент:
+
+```text
+get_lesson(topic: str) -> str
+```
+
+Он работает поверх локального mock API с учебными материалами и возвращает короткое объяснение темы.
+
+Прямой вызов MCP-инструмента из CLI:
+
+```bash
+ai-advent mcp call-tool get_lesson --arguments '{"topic":"mcp"}'
+```
+
+Ожидаемый результат:
+
+```text
+MCP tool result: get_lesson
+  is_error: False
+  structured_content: {'result': 'Model Context Protocol lets an agent discover and call external tools through a standard client-server protocol.'}
+  content:
+    Model Context Protocol lets an agent discover and call external tools through a standard client-server protocol.
+```
+
+Инструмент также подключен к интерактивному агенту через команду:
+
+```text
+/lesson mcp
+```
+
+Что происходит:
+
+1. CLI вызывает MCP-инструмент `get_lesson` с аргументом `{"topic": "mcp"}`.
+2. Результат инструмента печатается в терминал.
+3. Этот результат передается в `Agent.run_turn` как учебный материал.
+4. Агент использует MCP-результат, чтобы кратко объяснить тему и предложить следующий практический шаг.
+
+Демо-сценарий:
+
+```bash
+ai-advent agent
+```
+
+```text
+You: /lesson mcp
+MCP tool result: get_lesson
+  is_error: False
+  content:
+    Model Context Protocol lets an agent discover and call external tools through a standard client-server protocol.
+Assistant: ...
+```
