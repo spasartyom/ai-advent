@@ -13,6 +13,7 @@ from ai_advent.context import (
     SummaryContextStrategy,
 )
 from ai_advent.memory import JsonFileMemory
+from ai_advent.mcp_client import McpTool, list_tools_sync
 from ai_advent.tokens import TokenReport
 
 try:
@@ -554,12 +555,36 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="initial branch name for branch context experiments",
     )
 
+    mcp_parser = subparsers.add_parser(
+        "mcp",
+        help="inspect MCP servers and tools",
+    )
+    mcp_subparsers = mcp_parser.add_subparsers(dest="mcp_command")
+    list_tools_parser = mcp_subparsers.add_parser(
+        "list-tools",
+        help="connect to an MCP server and print available tools",
+    )
+    list_tools_parser.add_argument(
+        "--url",
+        default=None,
+        help="MCP Streamable HTTP URL, for example http://127.0.0.1:8000/mcp",
+    )
+    list_tools_parser.add_argument(
+        "--server-command",
+        default=None,
+        help="stdio server command. Defaults to the local AI Advent study server.",
+    )
+
     return parser.parse_args(argv)
 
 
 def main() -> None:
     args = parse_args()
     load_dotenv()
+
+    if args.command == "mcp":
+        run_mcp_command(args)
+        return
 
     if OpenAI is None:
         print(
@@ -601,6 +626,35 @@ def main() -> None:
             base_url,
             show_tokens=getattr(args, "show_tokens", False),
         )
+
+
+def run_mcp_command(args: argparse.Namespace) -> None:
+    if args.mcp_command != "list-tools":
+        print("Usage: ai-advent mcp list-tools [--url URL] [--server-command COMMAND]")
+        raise SystemExit(2)
+
+    command = split_command(args.server_command) if args.server_command else None
+    try:
+        tools = list_tools_sync(url=args.url, command=command)
+    except (RuntimeError, ValueError) as error:
+        print(f"MCP error: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
+
+    print_mcp_tools(tools)
+
+
+def print_mcp_tools(tools: list[McpTool]) -> None:
+    print(f"MCP tools: {len(tools)}")
+    if not tools:
+        print("  (none)")
+        return
+
+    for tool in tools:
+        display_name = tool.title or tool.name
+        print(f"- {tool.name}: {display_name}")
+        if tool.description:
+            print(f"  description: {tool.description}")
+        print(f"  input_schema: {tool.input_schema}")
 
 
 def build_context_strategy(

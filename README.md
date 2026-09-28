@@ -437,3 +437,53 @@ Task error: Cannot transition task from execution to done. Allowed next stages: 
 /task stage validation
 /task done
 ```
+
+## Неделя 4
+
+### День 16: подключение MCP
+
+Проект получил минимальный MCP-клиент и локальный demo MCP-сервер для Study Coach сценариев.
+
+Клиент подключается к MCP-серверу, устанавливает соединение и выводит список доступных инструментов с описанием и JSON Schema входных параметров.
+
+Установка зависимостей:
+
+```bash
+python -m pip install -e .
+```
+
+Проверка локального Study Coach MCP-сервера:
+
+```bash
+ai-advent mcp list-tools
+```
+
+Ожидаемый результат:
+
+```text
+MCP tools: 2
+- list_lessons: List study lessons
+  description: Return available AI Advent study lesson topics.
+  input_schema: {'type': 'object', 'properties': {}, 'title': 'list_lessonsArguments'}
+- get_lesson: Get study lesson
+  description: Return a short lesson for the requested topic.
+  input_schema: {'type': 'object', 'properties': {'topic': {'title': 'Topic', 'type': 'string'}}, 'required': ['topic'], 'title': 'get_lessonArguments'}
+```
+
+По умолчанию команда запускает локальный сервер через stdio:
+
+```bash
+python -m ai_advent.mcp_servers.study
+```
+
+Можно подключиться к внешнему Streamable HTTP MCP endpoint:
+
+```bash
+ai-advent mcp list-tools --url http://127.0.0.1:8000/mcp
+```
+
+Или указать свой stdio-сервер:
+
+```bash
+ai-advent mcp list-tools --server-command "python path/to/server.py"
+```
