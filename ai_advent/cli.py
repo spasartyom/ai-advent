@@ -3,6 +3,7 @@ import json
 import os
 import shlex
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from ai_advent.context import (
 )
 from ai_advent.memory import JsonFileMemory
 from ai_advent.mcp_client import McpTool, McpToolResult, call_tool_sync, list_tools_sync
+from ai_advent.scheduler import DEFAULT_SCHEDULER_FILE
 from ai_advent.tokens import TokenReport
 
 try:
@@ -37,6 +39,7 @@ API_KEY_ENV = "AI_ADVENT_API_KEY"
 BASE_URL_ENV = "AI_ADVENT_BASE_URL"
 MODEL_ENV = "AI_ADVENT_MODEL"
 MEMORY_FILE_ENV = "AI_ADVENT_MEMORY_FILE"
+SCHEDULER_FILE_ENV = "AI_ADVENT_SCHEDULER_FILE"
 DEFAULT_MEMORY_FILE = ".ai-advent/agent-memory.json"
 DEFAULT_CONTEXT_STRATEGY = "full"
 DEFAULT_KEEP_LAST = 10
@@ -88,6 +91,9 @@ def run_agent(
             continue
 
         if handle_lesson_command(agent, message, show_tokens=show_tokens):
+            continue
+
+        if handle_reminder_command(message):
             continue
 
         if not message:
@@ -145,6 +151,54 @@ def handle_lesson_command(
     token_report = getattr(response, "token_report", None)
     if show_tokens and token_report is not None:
         print_token_report(token_report)
+    return True
+
+
+def handle_reminder_command(message: str) -> bool:
+    parts = split_command(message)
+    if not parts:
+        return False
+
+    command = parts[0].lower()
+    if command == "/reminders":
+        if len(parts) != 1:
+            print("Usage: /reminders")
+            return True
+        try:
+            result = call_tool_sync("list_reminders")
+        except (RuntimeError, ValueError) as error:
+            print(f"MCP error: {error}", file=sys.stderr)
+            return True
+        print_mcp_tool_result(result)
+        return True
+
+    if command != "/remind":
+        return False
+
+    if len(parts) < 3:
+        print("Usage: /remind DUE_IN_SECONDS TITLE")
+        return True
+
+    try:
+        due_in_seconds = int(parts[1])
+    except ValueError:
+        print("Reminder error: DUE_IN_SECONDS must be an integer.", file=sys.stderr)
+        return True
+
+    title = " ".join(parts[2:])
+    try:
+        result = call_tool_sync(
+            "create_reminder",
+            {
+                "title": title,
+                "due_in_seconds": due_in_seconds,
+            },
+        )
+    except (RuntimeError, ValueError) as error:
+        print(f"MCP error: {error}", file=sys.stderr)
+        return True
+
+    print_mcp_tool_result(result)
     return True
 
 
@@ -622,6 +676,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="stdio server command. Defaults to the local AI Advent study server.",
     )
+    list_tools_parser.add_argument(
+        "--scheduler-file",
+        default=None,
+        help="JSON file used by local scheduler MCP tools",
+    )
     call_tool_parser = mcp_subparsers.add_parser(
         "call-tool",
         help="connect to an MCP server and call a tool",
@@ -642,6 +701,37 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="stdio server command. Defaults to the local AI Advent study server.",
     )
+    call_tool_parser.add_argument(
+        "--scheduler-file",
+        default=None,
+        help="JSON file used by local scheduler MCP tools",
+    )
+
+    worker_parser = subparsers.add_parser(
+        "worker",
+        help="run the MCP study scheduler worker",
+    )
+    worker_parser.add_argument(
+        "--interval",
+        type=float,
+        default=60.0,
+        help="seconds between scheduler checks",
+    )
+    worker_parser.add_argument(
+        "--once",
+        action="store_true",
+        help="run one scheduler check and exit",
+    )
+    worker_parser.add_argument(
+        "--scheduler-file",
+        default=None,
+        help="JSON file used to persist scheduler state",
+    )
+    worker_parser.add_argument(
+        "--server-command",
+        default=None,
+        help="stdio server command. Defaults to the local AI Advent study server.",
+    )
 
     return parser.parse_args(argv)
 
@@ -652,6 +742,10 @@ def main() -> None:
 
     if args.command == "mcp":
         run_mcp_command(args)
+        return
+
+    if args.command == "worker":
+        run_worker(args)
         return
 
     if OpenAI is None:
@@ -700,7 +794,11 @@ def run_mcp_command(args: argparse.Namespace) -> None:
     if args.mcp_command == "list-tools":
         command = split_command(args.server_command) if args.server_command else None
         try:
-            tools = list_tools_sync(url=args.url, command=command)
+            tools = list_tools_sync(
+                url=args.url,
+                command=command,
+                env=build_mcp_env(args.scheduler_file),
+            )
         except (RuntimeError, ValueError) as error:
             print(f"MCP error: {error}", file=sys.stderr)
             raise SystemExit(1) from error
@@ -717,6 +815,7 @@ def run_mcp_command(args: argparse.Namespace) -> None:
                 arguments,
                 url=args.url,
                 command=command,
+                env=build_mcp_env(args.scheduler_file),
             )
         except (RuntimeError, ValueError, json.JSONDecodeError) as error:
             print(f"MCP error: {error}", file=sys.stderr)
@@ -731,6 +830,49 @@ def run_mcp_command(args: argparse.Namespace) -> None:
 
     print("Usage: ai-advent mcp list-tools|call-tool ...")
     raise SystemExit(2)
+
+
+def run_worker(args: argparse.Namespace) -> None:
+    if args.interval <= 0:
+        print("Worker error: --interval must be greater than zero.", file=sys.stderr)
+        raise SystemExit(1)
+
+    command = split_command(args.server_command) if args.server_command else None
+    scheduler_file = args.scheduler_file or os.getenv(
+        SCHEDULER_FILE_ENV,
+        DEFAULT_SCHEDULER_FILE,
+    )
+    print(f"AI Advent worker (scheduler: {scheduler_file}, interval: {args.interval}s)")
+    print("Press Ctrl+C to stop.\n")
+
+    while True:
+        try:
+            result = call_tool_sync(
+                "run_due_tasks",
+                command=command,
+                env=build_mcp_env(scheduler_file),
+            )
+        except (RuntimeError, ValueError) as error:
+            print(f"MCP error: {error}", file=sys.stderr)
+            if args.once:
+                raise SystemExit(1) from error
+        else:
+            print_mcp_tool_result(result)
+
+        if args.once:
+            return
+        try:
+            time.sleep(args.interval)
+        except KeyboardInterrupt:
+            print("\nWorker stopped.")
+            return
+
+
+def build_mcp_env(scheduler_file: str | None = None) -> dict[str, str]:
+    path = scheduler_file or os.getenv(SCHEDULER_FILE_ENV)
+    if path is None:
+        return {}
+    return {SCHEDULER_FILE_ENV: path}
 
 
 def parse_tool_arguments(raw_arguments: str) -> dict[str, object]:
