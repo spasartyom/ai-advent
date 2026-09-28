@@ -461,13 +461,12 @@ ai-advent mcp list-tools
 Ожидаемый результат:
 
 ```text
-MCP tools: 2
+MCP tools: 5
 - list_lessons: List study lessons
-  description: Return available AI Advent study lesson topics.
-  input_schema: {'type': 'object', 'properties': {}, 'title': 'list_lessonsArguments'}
 - get_lesson: Get study lesson
-  description: Return a short lesson for the requested topic.
-  input_schema: {'type': 'object', 'properties': {'topic': {'title': 'Topic', 'type': 'string'}}, 'required': ['topic'], 'title': 'get_lessonArguments'}
+- create_reminder: Create study reminder
+- list_reminders: List study reminders
+- run_due_tasks: Run due study tasks
 ```
 
 По умолчанию команда запускает локальный сервер через stdio:
@@ -542,4 +541,66 @@ MCP tool result: get_lesson
   content:
     Model Context Protocol lets an agent discover and call external tools through a standard client-server protocol.
 Assistant: ...
+```
+
+### День 18: планировщик и фоновые задачи
+
+Study Coach MCP-сервер получил инструменты для отложенных учебных задач:
+
+```text
+create_reminder(title: str, due_in_seconds: int = 0, note: str = "") -> dict
+list_reminders() -> dict
+run_due_tasks() -> dict
+```
+
+Данные сохраняются в JSON-файл.
+
+По умолчанию используется:
+
+```text
+.ai-advent/study-scheduler.json
+```
+
+Можно указать отдельный файл для демки:
+
+```bash
+ai-advent mcp call-tool create_reminder --arguments '{"title":"Review MCP Day 18","due_in_seconds":0,"note":"demo"}' --scheduler-file /private/tmp/ai-advent-day18-scheduler.json
+```
+
+Запустить один проход фонового worker:
+
+```bash
+ai-advent worker --once --scheduler-file /private/tmp/ai-advent-day18-scheduler.json
+```
+
+Worker вызывает MCP-инструмент `run_due_tasks`, отмечает due reminders выполненными и возвращает агрегированную сводку:
+
+```text
+MCP tool result: run_due_tasks
+  is_error: False
+  content:
+    {
+      "due_count": 1,
+      "pending_count": 0,
+      "completed_count": 1,
+      "summary": "Completed 1 due study reminder(s): Review MCP Day 18. Pending reminders: 0."
+    }
+```
+
+Запустить worker как долгоживущий процесс:
+
+```bash
+ai-advent worker --interval 60
+```
+
+Интерактивный агент тоже может создать reminder через MCP:
+
+```text
+You: /remind 300 Повторить MCP tools
+```
+
+Посмотреть сохраненные reminders:
+
+```text
+You: /reminders
 ```

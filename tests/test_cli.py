@@ -6,11 +6,13 @@ from unittest.mock import patch
 
 from ai_advent.cli import (
     build_context_strategy,
+    build_mcp_env,
     handle_branch_command,
     handle_invariant_command,
     handle_lesson_command,
     handle_memory_command,
     handle_profile_command,
+    handle_reminder_command,
     handle_task_command,
     parse_args,
     parse_tool_arguments,
@@ -18,6 +20,7 @@ from ai_advent.cli import (
     print_mcp_tools,
     read_paste_block,
     run_agent,
+    run_worker,
 )
 from ai_advent.context import (
     FullContextStrategy,
@@ -197,6 +200,31 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.tool_name, "get_lesson")
         self.assertEqual(args.arguments, '{"topic": "mcp"}')
 
+    def test_worker_command_accepts_scheduler_options(self) -> None:
+        args = parse_args(
+            [
+                "worker",
+                "--once",
+                "--interval",
+                "0.5",
+                "--scheduler-file",
+                "demo-scheduler.json",
+            ]
+        )
+
+        self.assertEqual(args.command, "worker")
+        self.assertTrue(args.once)
+        self.assertEqual(args.interval, 0.5)
+        self.assertEqual(args.scheduler_file, "demo-scheduler.json")
+
+    def test_build_mcp_env_includes_scheduler_file_when_present(self) -> None:
+        self.assertEqual(
+            build_mcp_env("demo-scheduler.json"),
+            {"AI_ADVENT_SCHEDULER_FILE": "demo-scheduler.json"},
+        )
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(build_mcp_env(None), {})
+
     def test_parse_tool_arguments_requires_json_object(self) -> None:
         self.assertEqual(parse_tool_arguments('{"topic": "mcp"}'), {"topic": "mcp"})
 
@@ -262,6 +290,59 @@ class CliTests(unittest.TestCase):
         self.assertEqual(len(agent.messages), 1)
         self.assertIn("MCP explains external tools.", agent.messages[0])
         self.assertIn("Assistant: agent answer", output.getvalue())
+
+    def test_remind_command_calls_create_reminder_tool(self) -> None:
+        output = io.StringIO()
+
+        with patch(
+            "ai_advent.cli.call_tool_sync",
+            return_value=McpToolResult(
+                tool_name="create_reminder",
+                content_text="created",
+                structured_content={"id": "abc"},
+                is_error=False,
+            ),
+        ) as call_tool, redirect_stdout(output):
+            handled = handle_reminder_command("/remind 5 Review MCP")
+
+        self.assertTrue(handled)
+        call_tool.assert_called_once_with(
+            "create_reminder",
+            {
+                "title": "Review MCP",
+                "due_in_seconds": 5,
+            },
+        )
+        self.assertIn("MCP tool result: create_reminder", output.getvalue())
+
+    def test_worker_once_calls_run_due_tasks_tool(self) -> None:
+        args = parse_args(
+            [
+                "worker",
+                "--once",
+                "--scheduler-file",
+                "demo-scheduler.json",
+            ]
+        )
+        output = io.StringIO()
+
+        with patch(
+            "ai_advent.cli.call_tool_sync",
+            return_value=McpToolResult(
+                tool_name="run_due_tasks",
+                content_text="No due reminders",
+                structured_content=None,
+                is_error=False,
+            ),
+        ) as call_tool, redirect_stdout(output):
+            run_worker(args)
+
+        call_tool.assert_called_once_with(
+            "run_due_tasks",
+            command=None,
+            env={"AI_ADVENT_SCHEDULER_FILE": "demo-scheduler.json"},
+        )
+        self.assertIn("AI Advent worker", output.getvalue())
 
     def test_build_context_strategy_returns_full_strategy(self) -> None:
         self.assertIsInstance(build_context_strategy("full", 10), FullContextStrategy)

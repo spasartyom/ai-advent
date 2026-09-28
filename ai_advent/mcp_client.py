@@ -28,8 +28,9 @@ def list_tools_sync(
     *,
     url: str | None = None,
     command: list[str] | None = None,
+    env: dict[str, str] | None = None,
 ) -> list[McpTool]:
-    return asyncio.run(list_tools(url=url, command=command))
+    return asyncio.run(list_tools(url=url, command=command, env=env))
 
 
 def call_tool_sync(
@@ -38,6 +39,7 @@ def call_tool_sync(
     *,
     url: str | None = None,
     command: list[str] | None = None,
+    env: dict[str, str] | None = None,
 ) -> McpToolResult:
     return asyncio.run(
         call_tool(
@@ -45,6 +47,7 @@ def call_tool_sync(
             arguments,
             url=url,
             command=command,
+            env=env,
         )
     )
 
@@ -53,8 +56,9 @@ async def list_tools(
     *,
     url: str | None = None,
     command: list[str] | None = None,
+    env: dict[str, str] | None = None,
 ) -> list[McpTool]:
-    server = _build_server(url=url, command=command)
+    server = _build_server(url=url, command=command, env=env)
 
     tools: list[McpTool] = []
     async with _mcp_client(server) as client:
@@ -73,8 +77,9 @@ async def call_tool(
     *,
     url: str | None = None,
     command: list[str] | None = None,
+    env: dict[str, str] | None = None,
 ) -> McpToolResult:
-    server = _build_server(url=url, command=command)
+    server = _build_server(url=url, command=command, env=env)
 
     async with _mcp_client(server) as client:
         result = await client.call_tool(tool_name, arguments or {})
@@ -94,6 +99,7 @@ def _build_server(
     *,
     url: str | None = None,
     command: list[str] | None = None,
+    env: dict[str, str] | None = None,
 ) -> Any:
     try:
         from mcp import StdioServerParameters
@@ -114,6 +120,7 @@ def _build_server(
     return StdioServerParameters(
         command=server_command[0],
         args=server_command[1:],
+        env=env or {},
     )
 
 
