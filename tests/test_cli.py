@@ -17,7 +17,9 @@ from ai_advent.cli import (
     handle_task_command,
     parse_args,
     parse_tool_arguments,
+    print_orchestration_result,
     print_pipeline_result,
+    print_registered_tools,
     print_mcp_tool_result,
     print_mcp_tools,
     read_paste_block,
@@ -31,6 +33,7 @@ from ai_advent.context import (
     SummaryContextStrategy,
 )
 from ai_advent.mcp_client import McpTool, McpToolResult
+from ai_advent.orchestration import OrchestrationResult, OrchestrationStep, RegisteredTool
 from ai_advent.pipeline import PipelineResult, PipelineStep
 from ai_advent.task import create_task_state, validate_task_transition
 from ai_advent.tokens import TokenReport
@@ -219,6 +222,28 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.query, "mcp")
         self.assertEqual(args.notes_dir, "demo-notes")
 
+    def test_mcp_orchestrate_command_is_available(self) -> None:
+        args = parse_args(
+            [
+                "mcp",
+                "orchestrate",
+                "mcp",
+                "--notes-dir",
+                "demo-notes",
+                "--scheduler-file",
+                "demo-scheduler.json",
+                "--remind-in",
+                "60",
+            ]
+        )
+
+        self.assertEqual(args.command, "mcp")
+        self.assertEqual(args.mcp_command, "orchestrate")
+        self.assertEqual(args.query, "mcp")
+        self.assertEqual(args.notes_dir, "demo-notes")
+        self.assertEqual(args.scheduler_file, "demo-scheduler.json")
+        self.assertEqual(args.remind_in, 60)
+
     def test_worker_command_accepts_scheduler_options(self) -> None:
         args = parse_args(
             [
@@ -390,6 +415,64 @@ class CliTests(unittest.TestCase):
         printed = output.getvalue()
         self.assertIn("1. save_note", printed)
         self.assertIn("Saved note: demo-notes/study-note-mcp.md", printed)
+
+    def test_print_registered_tools_groups_tools_by_server(self) -> None:
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            print_registered_tools(
+                [
+                    RegisteredTool(
+                        server_name="lessons",
+                        tool=McpTool(
+                            name="search_lessons",
+                            title="Search lessons",
+                            description=None,
+                            input_schema={},
+                        ),
+                    ),
+                    RegisteredTool(
+                        server_name="notes",
+                        tool=McpTool(
+                            name="save_note",
+                            title="Save note",
+                            description=None,
+                            input_schema={},
+                        ),
+                    ),
+                ]
+            )
+
+        printed = output.getvalue()
+        self.assertIn("lessons: search_lessons", printed)
+        self.assertIn("notes: save_note", printed)
+
+    def test_print_orchestration_result_outputs_server_tool_steps(self) -> None:
+        output = io.StringIO()
+        result = OrchestrationResult(
+            query="mcp",
+            steps=[
+                OrchestrationStep(
+                    server_name="lessons",
+                    tool_name="search_lessons",
+                    arguments={"query": "mcp"},
+                    result=McpToolResult("search_lessons", "", None, False),
+                )
+            ],
+            saved_path="demo-output/day20/study-note-mcp.md",
+            reminder_id="reminder-1",
+            summary="# Study note",
+            scheduler_summary="Completed 1 due study reminder.",
+        )
+
+        with redirect_stdout(output):
+            print_orchestration_result(result)
+
+        printed = output.getvalue()
+        self.assertIn("1. lessons.search_lessons", printed)
+        self.assertIn("Saved note: demo-output/day20/study-note-mcp.md", printed)
+        self.assertIn("Reminder id: reminder-1", printed)
+        self.assertIn("Scheduler summary: Completed 1 due study reminder.", printed)
 
     def test_worker_once_calls_run_due_tasks_tool(self) -> None:
         args = parse_args(

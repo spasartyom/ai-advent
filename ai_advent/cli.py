@@ -16,6 +16,12 @@ from ai_advent.context import (
 )
 from ai_advent.memory import JsonFileMemory
 from ai_advent.mcp_client import McpTool, McpToolResult, call_tool_sync, list_tools_sync
+from ai_advent.orchestration import (
+    OrchestrationResult,
+    RegisteredTool,
+    build_default_orchestrator,
+    run_study_orchestration_flow,
+)
 from ai_advent.pipeline import PipelineResult, run_study_note_pipeline
 from ai_advent.scheduler import DEFAULT_SCHEDULER_FILE
 from ai_advent.tokens import TokenReport
@@ -99,6 +105,9 @@ def run_agent(
             continue
 
         if handle_note_command(message):
+            continue
+
+        if handle_orchestration_command(message):
             continue
 
         if not message:
@@ -231,6 +240,32 @@ def handle_note_command(message: str) -> bool:
         return True
 
     print_pipeline_result(result)
+    return True
+
+
+def handle_orchestration_command(message: str) -> bool:
+    parts = split_command(message)
+    if not parts or parts[0].lower() != "/study-flow":
+        return False
+
+    if len(parts) < 2:
+        print("Usage: /study-flow QUERY")
+        return True
+
+    query = " ".join(parts[1:])
+    orchestrator = build_default_orchestrator(
+        scheduler_file=os.getenv(SCHEDULER_FILE_ENV),
+        notes_dir=os.getenv(NOTES_DIR_ENV),
+    )
+    try:
+        registered_tools = orchestrator.discover_tools()
+        result = run_study_orchestration_flow(query, orchestrator=orchestrator)
+    except (RuntimeError, ValueError) as error:
+        print(f"Orchestration error: {error}", file=sys.stderr)
+        return True
+
+    print_registered_tools(registered_tools)
+    print_orchestration_result(result)
     return True
 
 
@@ -763,6 +798,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="stdio server command. Defaults to the local AI Advent study server.",
     )
+    orchestrate_parser = mcp_subparsers.add_parser(
+        "orchestrate",
+        help="run a multi-server MCP orchestration flow",
+    )
+    orchestrate_parser.add_argument("query", help="lesson query for the flow")
+    orchestrate_parser.add_argument(
+        "--notes-dir",
+        default=None,
+        help="directory used by the notes MCP server",
+    )
+    orchestrate_parser.add_argument(
+        "--scheduler-file",
+        default=None,
+        help="JSON file used by the scheduler MCP server",
+    )
+    orchestrate_parser.add_argument(
+        "--remind-in",
+        type=int,
+        default=0,
+        help="seconds before the review reminder is due",
+    )
 
     worker_parser = subparsers.add_parser(
         "worker",
@@ -907,11 +963,31 @@ def run_mcp_command(args: argparse.Namespace) -> None:
         print_pipeline_result(result)
         return
 
+    if args.mcp_command == "orchestrate":
+        orchestrator = build_default_orchestrator(
+            scheduler_file=args.scheduler_file,
+            notes_dir=args.notes_dir,
+        )
+        try:
+            registered_tools = orchestrator.discover_tools()
+            result = run_study_orchestration_flow(
+                args.query,
+                reminder_seconds=args.remind_in,
+                orchestrator=orchestrator,
+            )
+        except (RuntimeError, ValueError) as error:
+            print(f"Orchestration error: {error}", file=sys.stderr)
+            raise SystemExit(1) from error
+
+        print_registered_tools(registered_tools)
+        print_orchestration_result(result)
+        return
+
     if args.mcp_command is None:
-        print("Usage: ai-advent mcp list-tools|call-tool|run-pipeline ...")
+        print("Usage: ai-advent mcp list-tools|call-tool|run-pipeline|orchestrate ...")
         raise SystemExit(2)
 
-    print("Usage: ai-advent mcp list-tools|call-tool|run-pipeline ...")
+    print("Usage: ai-advent mcp list-tools|call-tool|run-pipeline|orchestrate ...")
     raise SystemExit(2)
 
 
@@ -1004,6 +1080,28 @@ def print_pipeline_result(result: PipelineResult) -> None:
         print(f"   arguments: {step.arguments}")
         print(f"   is_error: {step.result.is_error}")
     print(f"Saved note: {result.saved_path}")
+
+
+def print_registered_tools(registered_tools: list[RegisteredTool]) -> None:
+    print("Registered MCP servers:")
+    by_server: dict[str, list[str]] = {}
+    for registered_tool in registered_tools:
+        by_server.setdefault(registered_tool.server_name, []).append(
+            registered_tool.tool.name,
+        )
+    for server_name, tool_names in sorted(by_server.items()):
+        print(f"- {server_name}: {', '.join(sorted(tool_names))}")
+
+
+def print_orchestration_result(result: OrchestrationResult) -> None:
+    print(f"MCP orchestration: study flow for {result.query}")
+    for index, step in enumerate(result.steps, start=1):
+        print(f"{index}. {step.server_name}.{step.tool_name}")
+        print(f"   arguments: {step.arguments}")
+        print(f"   is_error: {step.result.is_error}")
+    print(f"Saved note: {result.saved_path}")
+    print(f"Reminder id: {result.reminder_id or '(not returned)'}")
+    print(f"Scheduler summary: {result.scheduler_summary}")
 
 
 def build_context_strategy(
