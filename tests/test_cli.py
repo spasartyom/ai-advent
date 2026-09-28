@@ -11,6 +11,7 @@ from ai_advent.cli import (
     handle_profile_command,
     handle_task_command,
     parse_args,
+    print_mcp_tools,
     read_paste_block,
     run_agent,
 )
@@ -20,6 +21,7 @@ from ai_advent.context import (
     StickyFactsContextStrategy,
     SummaryContextStrategy,
 )
+from ai_advent.mcp_client import McpTool
 from ai_advent.task import create_task_state, validate_task_transition
 from ai_advent.tokens import TokenReport
 
@@ -151,6 +153,50 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.context_strategy, "summary")
         self.assertEqual(args.keep_last, 4)
         self.assertEqual(args.branch, "option_a")
+
+    def test_mcp_list_tools_command_is_available(self) -> None:
+        args = parse_args(["mcp", "list-tools"])
+
+        self.assertEqual(args.command, "mcp")
+        self.assertEqual(args.mcp_command, "list-tools")
+        self.assertIsNone(args.url)
+        self.assertIsNone(args.server_command)
+
+    def test_mcp_list_tools_command_accepts_url_and_stdio_command(self) -> None:
+        args = parse_args(
+            [
+                "mcp",
+                "list-tools",
+                "--url",
+                "http://127.0.0.1:8000/mcp",
+                "--server-command",
+                "python server.py",
+            ]
+        )
+
+        self.assertEqual(args.url, "http://127.0.0.1:8000/mcp")
+        self.assertEqual(args.server_command, "python server.py")
+
+    def test_print_mcp_tools_outputs_tool_details(self) -> None:
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            print_mcp_tools(
+                [
+                    McpTool(
+                        name="get_lesson",
+                        title="Get study lesson",
+                        description="Return a lesson.",
+                        input_schema={"type": "object"},
+                    )
+                ]
+            )
+
+        printed = output.getvalue()
+        self.assertIn("MCP tools: 1", printed)
+        self.assertIn("get_lesson: Get study lesson", printed)
+        self.assertIn("description: Return a lesson.", printed)
+        self.assertIn("input_schema: {'type': 'object'}", printed)
 
     def test_build_context_strategy_returns_full_strategy(self) -> None:
         self.assertIsInstance(build_context_strategy("full", 10), FullContextStrategy)

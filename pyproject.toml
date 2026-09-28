@@ -9,6 +9,7 @@ description = "Interactive CLI chat using the OpenAI Python SDK"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "mcp>=2.0,<3.0",
     "openai>=2.0,<3.0",
     "python-dotenv>=1.0,<2.0",
 ]
