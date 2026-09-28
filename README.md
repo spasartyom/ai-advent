@@ -461,9 +461,12 @@ ai-advent mcp list-tools
 Ожидаемый результат:
 
 ```text
-MCP tools: 5
+MCP tools: 8
 - list_lessons: List study lessons
 - get_lesson: Get study lesson
+- search_lessons: Search study lessons
+- summarize_note: Summarize study note
+- save_note: Save study note
 - create_reminder: Create study reminder
 - list_reminders: List study reminders
 - run_due_tasks: Run due study tasks
@@ -603,4 +606,52 @@ You: /remind 300 Повторить MCP tools
 
 ```text
 You: /reminders
+```
+
+### День 19: композиция MCP-инструментов
+
+Study Coach получил автоматический pipeline из нескольких MCP-инструментов:
+
+```text
+search_lessons -> summarize_note -> save_note
+```
+
+Что делает pipeline:
+
+1. `search_lessons` ищет учебный материал по запросу.
+2. `summarize_note` превращает найденный материал в короткую заметку.
+3. `save_note` сохраняет результат в Markdown-файл.
+
+Запуск pipeline из CLI:
+
+```bash
+ai-advent mcp run-pipeline mcp --notes-dir /private/tmp/ai-advent-day19-notes
+```
+
+Ожидаемый результат:
+
+```text
+MCP pipeline: study note for mcp
+1. search_lessons
+   arguments: {'query': 'mcp'}
+   is_error: False
+2. summarize_note
+   arguments: {'title': 'Study note: mcp', 'content': 'mcp: Model Context Protocol lets an agent discover and call external tools through a standard client-server protocol.'}
+   is_error: False
+3. save_note
+   arguments: {'title': 'Study note: mcp', 'content': '# Study note: mcp...'}
+   is_error: False
+Saved note: /private/tmp/ai-advent-day19-notes/study-note-mcp.md
+```
+
+Проверить сохраненный файл:
+
+```bash
+cat /private/tmp/ai-advent-day19-notes/study-note-mcp.md
+```
+
+Интерактивный агент тоже может запустить pipeline:
+
+```text
+You: /note mcp
 ```

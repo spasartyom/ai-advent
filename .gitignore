@@ -152,6 +152,7 @@ activemq-data/
 .env
 .envrc
 .ai-advent/
+demo-output/
 .venv
 env/
 venv/

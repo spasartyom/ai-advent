@@ -11,11 +11,13 @@ from ai_advent.cli import (
     handle_invariant_command,
     handle_lesson_command,
     handle_memory_command,
+    handle_note_command,
     handle_profile_command,
     handle_reminder_command,
     handle_task_command,
     parse_args,
     parse_tool_arguments,
+    print_pipeline_result,
     print_mcp_tool_result,
     print_mcp_tools,
     read_paste_block,
@@ -29,6 +31,7 @@ from ai_advent.context import (
     SummaryContextStrategy,
 )
 from ai_advent.mcp_client import McpTool, McpToolResult
+from ai_advent.pipeline import PipelineResult, PipelineStep
 from ai_advent.task import create_task_state, validate_task_transition
 from ai_advent.tokens import TokenReport
 
@@ -200,6 +203,22 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.tool_name, "get_lesson")
         self.assertEqual(args.arguments, '{"topic": "mcp"}')
 
+    def test_mcp_run_pipeline_command_is_available(self) -> None:
+        args = parse_args(
+            [
+                "mcp",
+                "run-pipeline",
+                "mcp",
+                "--notes-dir",
+                "demo-notes",
+            ]
+        )
+
+        self.assertEqual(args.command, "mcp")
+        self.assertEqual(args.mcp_command, "run-pipeline")
+        self.assertEqual(args.query, "mcp")
+        self.assertEqual(args.notes_dir, "demo-notes")
+
     def test_worker_command_accepts_scheduler_options(self) -> None:
         args = parse_args(
             [
@@ -221,6 +240,10 @@ class CliTests(unittest.TestCase):
         self.assertEqual(
             build_mcp_env("demo-scheduler.json"),
             {"AI_ADVENT_SCHEDULER_FILE": "demo-scheduler.json"},
+        )
+        self.assertEqual(
+            build_mcp_env(notes_dir="demo-notes"),
+            {"AI_ADVENT_NOTES_DIR": "demo-notes"},
         )
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(build_mcp_env(None), {})
@@ -314,6 +337,59 @@ class CliTests(unittest.TestCase):
             },
         )
         self.assertIn("MCP tool result: create_reminder", output.getvalue())
+
+    def test_note_command_runs_study_note_pipeline(self) -> None:
+        output = io.StringIO()
+        result = PipelineResult(
+            query="mcp",
+            steps=[
+                PipelineStep(
+                    tool_name="search_lessons",
+                    arguments={"query": "mcp"},
+                    result=McpToolResult(
+                        "search_lessons",
+                        "",
+                        [{"topic": "mcp"}],
+                        False,
+                    ),
+                )
+            ],
+            saved_path="demo-notes/study-note-mcp.md",
+            summary="# Study note",
+        )
+
+        with patch(
+            "ai_advent.cli.run_study_note_pipeline",
+            return_value=result,
+        ) as run_pipeline, redirect_stdout(output):
+            handled = handle_note_command("/note mcp")
+
+        self.assertTrue(handled)
+        run_pipeline.assert_called_once()
+        self.assertIn("MCP pipeline: study note for mcp", output.getvalue())
+        self.assertIn("Saved note: demo-notes/study-note-mcp.md", output.getvalue())
+
+    def test_print_pipeline_result_outputs_steps_and_saved_path(self) -> None:
+        output = io.StringIO()
+        result = PipelineResult(
+            query="mcp",
+            steps=[
+                PipelineStep(
+                    tool_name="save_note",
+                    arguments={"title": "Study note: mcp"},
+                    result=McpToolResult("save_note", "", None, False),
+                )
+            ],
+            saved_path="demo-notes/study-note-mcp.md",
+            summary="# Study note",
+        )
+
+        with redirect_stdout(output):
+            print_pipeline_result(result)
+
+        printed = output.getvalue()
+        self.assertIn("1. save_note", printed)
+        self.assertIn("Saved note: demo-notes/study-note-mcp.md", printed)
 
     def test_worker_once_calls_run_due_tasks_tool(self) -> None:
         args = parse_args(
