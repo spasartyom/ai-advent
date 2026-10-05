@@ -207,6 +207,7 @@ class RagResponder:
         candidate_k: int | None = None,
         min_score: float = 0.2,
         rewrite_query: bool = False,
+        conversation_context: str = "",
     ) -> GroundedRagAnswer:
         if not question.strip():
             raise ValueError("question cannot be empty.")
@@ -250,7 +251,12 @@ class RagResponder:
                 {"role": "system", "content": GROUNDING_SYSTEM_PROMPT},
                 {
                     "role": "user",
-                    "content": build_grounded_rag_prompt(question, retrieved, citations),
+                    "content": build_grounded_rag_prompt(
+                        question,
+                        retrieved,
+                        citations,
+                        conversation_context=conversation_context,
+                    ),
                 },
             ],
         )
@@ -310,6 +316,7 @@ def build_grounded_rag_prompt(
     question: str,
     retrieved: list[SearchResult],
     citations: list[RagCitation],
+    conversation_context: str = "",
 ) -> str:
     context = "\n\n".join(
         _format_retrieved_chunk(index, result)
@@ -323,6 +330,7 @@ def build_grounded_rag_prompt(
         "Ответь на вопрос пользователя строго по найденному контексту.\n"
         "Обязательно включи три блока: `Ответ`, `Источники`, `Цитаты`.\n"
         "Не добавляй факты, которых нет в контексте.\n\n"
+        f"Память задачи и история диалога:\n{conversation_context or '(empty)'}\n\n"
         f"Вопрос:\n{question}\n\n"
         f"Разрешенные источники и цитаты:\n{citation_block}\n\n"
         f"Найденный контекст:\n{context}"

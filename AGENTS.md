@@ -2,11 +2,11 @@
 
 This repository is a learning project for an AI agents challenge.
 
-Current state: week 5 has started and builds RAG capabilities on top of the Study Coach Agent plus MCP tooling.
+Current state: week 5 is complete and builds RAG capabilities on top of the Study Coach Agent plus MCP tooling.
 Week 1 is archived in Git tags and should not shape new implementation unless we explicitly need to inspect old exercises.
 Week 3 developed the CLI agent into a Study Coach Agent.
 Week 4 connected the Study Coach to MCP tools, scheduled background work, tool pipelines, and multi-server orchestration.
-Week 5 adds local document indexing, the first RAG question-answer flow, retrieval quality improvements, and grounded answers with sources and citations.
+Week 5 adds local document indexing, the first RAG question-answer flow, retrieval quality improvements, grounded answers with sources and citations, and a production-like mini-chat with RAG plus task memory.
 
 ## Challenge State
 
@@ -43,12 +43,13 @@ Week 4 is complete:
 - `w4_d4` / Day 19 - composed MCP tool pipeline for searching, summarizing, and saving notes
 - `w4_d5` / Day 20 - multi-server MCP orchestration across lessons, notes, and scheduler servers
 
-Week 5 has started:
+Week 5 is complete:
 
 - `w5_d1` / Day 21 - local document indexing with chunking, embeddings, JSON vector index, metadata, and chunking strategy comparison
 - `w5_d2` / Day 22 - first RAG request with retrieval, RAG prompt construction, with-RAG/without-RAG comparison, and 10 control questions
 - `w5_d3` / Day 23 - RAG filtering, heuristic reranking, query rewrite, and baseline/improved retrieval comparison
 - `w5_d4` / Day 24 - grounded RAG answers with mandatory sources, quotes, and low-relevance refusal
+- `w5_d5` / Day 25 - mini-chat with RAG, sources, citations, persisted dialogue history, and explicit task memory
 
 ## Current Product Shape
 
@@ -82,7 +83,9 @@ ai-advent rag ask "Какие команды CLI управляют task state?"
 ai-advent rag compare "Какие команды CLI управляют task state?"
 ai-advent rag compare-retrieval "Какие метаданные сохраняются у каждого чанка?"
 ai-advent rag cited "Какие метаданные сохраняются у каждого чанка?"
+ai-advent rag chat
 ai-advent rag eval-questions
+ai-advent rag chat-scenarios
 ```
 
 The agent talks to an OpenAI-compatible Chat Completions API. Provider settings
@@ -129,7 +132,7 @@ Responsibilities:
 - expose `ai-advent mcp list-tools`, `call-tool`, `run-pipeline`, and `orchestrate`;
 - expose `ai-advent worker` for running due scheduler tasks;
 - expose `ai-advent index build` for document indexing;
-- expose `ai-advent rag ask`, `compare`, `compare-retrieval`, `cited`, and `eval-questions` for first RAG workflows.
+- expose `ai-advent rag ask`, `compare`, `compare-retrieval`, `cited`, `chat`, `eval-questions`, and `chat-scenarios` for RAG workflows.
 
 This file should stay thin. Avoid putting agent logic, memory logic, token
 accounting, context strategies, MCP transport logic, scheduler persistence, pipeline logic, orchestration logic, document loading, chunking, embedding provider logic, vector search, or RAG prompt construction here.
@@ -434,6 +437,20 @@ Responsibilities:
 - format the questions for `ai-advent rag eval-questions`;
 - stay deterministic and offline.
 
+### `ai_advent/rag_chat.py`
+
+Production-like mini-chat layer for Day 25.
+
+Responsibilities:
+
+- define explicit RAG task memory with goal, clarifications, constraints, and terms;
+- persist RAG chat messages and task memory in JSON through `JsonRagChatMemory`;
+- format task memory plus recent dialogue as extra context for grounded RAG prompts;
+- run each user question through `RagResponder.answer_with_citations`;
+- keep answer generation grounded with sources and quotes on every normal turn;
+- expose two long manual test scenarios through `format_rag_chat_scenarios`;
+- stay separate from `Agent.run_turn` so RAG remains explicit and testable.
+
 ### `ai_advent/mcp_servers/`
 
 Local MCP servers for Study Coach tools.
@@ -651,7 +668,9 @@ CLI commands:
 - `ai-advent rag compare QUESTION`
 - `ai-advent rag compare-retrieval QUESTION`
 - `ai-advent rag cited QUESTION`
+- `ai-advent rag chat`
 - `ai-advent rag eval-questions`
+- `ai-advent rag chat-scenarios`
 
 Current flow:
 
@@ -686,8 +705,17 @@ Day 24 adds grounded RAG answers:
 - if no chunks pass `--min-score`, the command returns “Не знаю...” and asks for clarification without calling the model;
 - grounded answers still use explicit retrieval through `rag.py`, not hidden automatic retrieval inside `Agent.run_turn`.
 
+Day 25 adds a production-like mini-chat:
+
+- `rag chat` stores dialogue history and explicit task memory in JSON;
+- task memory tracks goal, clarifications, constraints, and terms;
+- chat commands are `/goal TEXT`, `/clarify TEXT`, `/constraint TEXT`, `/term KEY VALUE`, `/memory`, and `/exit`;
+- every normal chat turn runs grounded RAG and prints sources and quotes;
+- default RAG chat memory file is `.ai-advent/rag-chat-memory.json`;
+- `rag chat-scenarios` prints two 10-message manual test scenarios.
+
 Keep Week 5 RAG explicit through CLI commands and `rag.py`.
-Do not hide automatic RAG retrieval inside `Agent.run_turn` until a future day explicitly requires a production-like chat integration.
+Do not hide automatic RAG retrieval inside `Agent.run_turn`; Day 25 production-like behavior lives in the explicit `rag chat` layer.
 
 ### `tests/`
 
@@ -716,7 +744,8 @@ Current tests cover:
 - RAG prompt construction, retrieval, with-RAG answers, and with/without-RAG comparison;
 - RAG query rewrite, similarity filtering, heuristic reranking, and baseline/improved retrieval comparison;
 - grounded RAG citations, mandatory source/quote construction, and low-relevance refusal before model calls;
-- RAG CLI command parsing and control-question formatting;
+- RAG chat task memory, JSON persistence, recent-dialog context formatting, and long scenario formatting;
+- RAG CLI command parsing, control-question formatting, and chat scenario formatting;
 - multiline CLI paste mode;
 - defensive copying of messages;
 - usage metadata propagation;
@@ -753,6 +782,7 @@ Week 2, Week 3, and Week 4 implementations are finished. Preserve their shape un
 - Document index construction belongs in `indexing.py`.
 - RAG retrieval, prompt construction, filtering, reranking, query rewrite, with/without-RAG comparison, grounded citations, and low-relevance refusal belong in `rag.py`.
 - RAG control questions belong in `rag_eval.py`.
+- RAG chat task memory, JSON chat persistence, recent-dialog context formatting, and long scenario fixtures belong in `rag_chat.py`.
 
 Preferred design:
 
@@ -760,7 +790,8 @@ Preferred design:
 - keep `chat.py` as a low-level API adapter;
 - keep `Agent` as the main user-facing domain object;
 - keep MCP tool calls explicit through CLI commands and MCP helpers rather than hiding automatic tool selection inside `Agent`;
-- keep RAG retrieval explicit through CLI commands and RAG helpers until a future day explicitly requires integrating it into the interactive agent loop;
+- keep RAG retrieval explicit through CLI commands and RAG helpers;
+- keep Day 25 mini-chat behavior in `rag_chat.py` and `ai-advent rag chat`, not in the core `Agent`;
 - introduce small strategy or storage classes only when the next task needs
   them;
 - keep tests offline with fake API objects.

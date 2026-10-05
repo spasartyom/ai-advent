@@ -1013,3 +1013,68 @@ ai-advent rag eval-questions
 2. Есть ли цитаты.
 3. Совпадает ли смысл ответа с цитатами.
 4. Срабатывает ли “не знаю” при завышенном `--min-score`.
+
+### День 25: мини-чат с RAG и памятью задачи
+
+Проект получил production-like mini-chat поверх grounded RAG.
+
+Запуск:
+
+```bash
+ai-advent rag chat --embedding-provider ollama --embedding-model nomic-embed-text --index .ai-advent/document-index.json --memory-file .ai-advent/rag-chat-memory.json --top-k 5 --candidate-k 20 --min-score 0.2
+```
+
+Чат хранит:
+
+- историю диалога;
+- цель текущего диалога;
+- уточнения пользователя;
+- ограничения;
+- термины.
+
+Команды внутри `rag chat`:
+
+```text
+/goal TEXT
+/clarify TEXT
+/constraint TEXT
+/term KEY VALUE
+/memory
+/exit
+```
+
+Каждый обычный вопрос проходит через grounded RAG:
+
+```text
+user message -> task memory + recent history -> retrieval -> grounded answer -> sources -> quotes
+```
+
+Память сохраняется в JSON-файл:
+
+```text
+.ai-advent/rag-chat-memory.json
+```
+
+Можно указать отдельный файл для демо:
+
+```bash
+ai-advent rag chat --memory-file demo-output/day25-rag-chat.json --embedding-provider ollama --embedding-model nomic-embed-text
+```
+
+Два длинных сценария проверки:
+
+```bash
+ai-advent rag chat-scenarios
+```
+
+Сценарии проверяют, что ассистент:
+
+- не теряет цель диалога;
+- учитывает уточнения, ограничения и термины;
+- продолжает отвечать с источниками и цитатами;
+- выдерживает 10 сообщений в одной сессии.
+
+Основные модули:
+
+- `ai_advent/rag_chat.py` - RAG chat session, JSON memory, task memory, demo scenarios.
+- `ai_advent/rag.py` - grounded answer generation with sources, quotes and low-relevance refusal.

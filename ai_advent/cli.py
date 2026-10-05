@@ -36,6 +36,12 @@ from ai_advent.rag import (
     RagResponder,
     RagRetrievalComparison,
 )
+from ai_advent.rag_chat import (
+    JsonRagChatMemory,
+    RagChatSession,
+    format_rag_chat_context,
+    format_rag_chat_scenarios,
+)
 from ai_advent.rag_eval import format_control_questions
 from ai_advent.scheduler import DEFAULT_SCHEDULER_FILE
 from ai_advent.tokens import TokenReport
@@ -70,6 +76,7 @@ SCHEDULER_FILE_ENV = "AI_ADVENT_SCHEDULER_FILE"
 NOTES_DIR_ENV = "AI_ADVENT_NOTES_DIR"
 DEFAULT_MEMORY_FILE = ".ai-advent/agent-memory.json"
 DEFAULT_DOCUMENT_INDEX_FILE = ".ai-advent/document-index.json"
+DEFAULT_RAG_CHAT_MEMORY_FILE = ".ai-advent/rag-chat-memory.json"
 DEFAULT_CONTEXT_STRATEGY = "full"
 DEFAULT_KEEP_LAST = 10
 
@@ -957,9 +964,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="answer with mandatory sources, quotes, and low-relevance refusal",
     )
     _add_rag_query_arguments(cited_parser)
+    chat_parser = rag_subparsers.add_parser(
+        "chat",
+        help="run an interactive RAG chat with task memory and sources",
+    )
+    _add_rag_chat_arguments(chat_parser)
     rag_subparsers.add_parser(
         "eval-questions",
         help="print the 10 control questions for the document index",
+    )
+    rag_subparsers.add_parser(
+        "chat-scenarios",
+        help="print two long RAG chat test scenarios",
     )
 
     return parser.parse_args(argv)
@@ -967,6 +983,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def _add_rag_query_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("question", help="question to answer")
+    _add_rag_shared_arguments(parser)
+
+
+def _add_rag_chat_arguments(parser: argparse.ArgumentParser) -> None:
+    _add_rag_shared_arguments(parser)
+    parser.add_argument(
+        "--memory-file",
+        default=DEFAULT_RAG_CHAT_MEMORY_FILE,
+        help="JSON file used to persist RAG chat history and task memory",
+    )
+    parser.add_argument(
+        "--keep-last",
+        type=int,
+        default=12,
+        help="number of recent chat messages to include in RAG chat context",
+    )
+
+
+def _add_rag_shared_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--index",
         default=DEFAULT_DOCUMENT_INDEX_FILE,
@@ -1241,8 +1276,12 @@ def run_rag_command(args: argparse.Namespace) -> None:
         for line in format_control_questions():
             print(line)
         return
-    if args.rag_command not in {"ask", "compare", "compare-retrieval", "cited"}:
-        print("Usage: ai-advent rag ask|compare|compare-retrieval|cited|eval-questions ...")
+    if args.rag_command == "chat-scenarios":
+        for line in format_rag_chat_scenarios():
+            print(line)
+        return
+    if args.rag_command not in {"ask", "compare", "compare-retrieval", "cited", "chat"}:
+        print("Usage: ai-advent rag ask|compare|compare-retrieval|cited|chat|eval-questions|chat-scenarios ...")
         raise SystemExit(2)
     if args.top_k <= 0:
         print("RAG error: --top-k must be greater than zero.", file=sys.stderr)
@@ -1266,31 +1305,12 @@ def run_rag_command(args: argparse.Namespace) -> None:
         )
         raise SystemExit(1)
 
-    try:
-        index = VectorIndex.load(args.index)
-    except (OSError, ValueError) as error:
-        print(f"RAG error: cannot load index: {error}", file=sys.stderr)
-        raise SystemExit(1) from error
-
-    embedding_provider = _index_embedding_provider(args)
-    embedding_model = args.embedding_model or index.embedding_model or _index_embedding_model(
-        args,
-        embedding_provider,
-    )
-    embeddings_api = _build_index_embeddings_api(args, embedding_provider)
-    chat_model = args.model or os.getenv(MODEL_ENV) or os.getenv("OPENAI_MODEL") or DEFAULT_MODEL
-    base_url = os.getenv(BASE_URL_ENV) or os.getenv("OPENAI_BASE_URL")
-    client = OpenAI(api_key=api_key, base_url=base_url)
-    responder = RagResponder(
-        index=index,
-        embeddings_api=embeddings_api,
-        embedding_model=embedding_model,
-        chat_completions_api=client.chat.completions,
-        chat_model=chat_model,
-        top_k=args.top_k,
-    )
+    responder = build_rag_responder(args, api_key)
 
     try:
+        if args.rag_command == "chat":
+            run_rag_chat(args, responder)
+            return
         if args.rag_command == "ask":
             print_rag_answer(
                 responder.answer(
@@ -1324,6 +1344,101 @@ def run_rag_command(args: argparse.Namespace) -> None:
     except (RuntimeError, ValueError) as error:
         print(f"RAG error: {error}", file=sys.stderr)
         raise SystemExit(1) from error
+
+
+def build_rag_responder(args: argparse.Namespace, api_key: str) -> RagResponder:
+    try:
+        index = VectorIndex.load(args.index)
+    except (OSError, ValueError) as error:
+        print(f"RAG error: cannot load index: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
+
+    embedding_provider = _index_embedding_provider(args)
+    embedding_model = args.embedding_model or index.embedding_model or _index_embedding_model(
+        args,
+        embedding_provider,
+    )
+    embeddings_api = _build_index_embeddings_api(args, embedding_provider)
+    chat_model = args.model or os.getenv(MODEL_ENV) or os.getenv("OPENAI_MODEL") or DEFAULT_MODEL
+    base_url = os.getenv(BASE_URL_ENV) or os.getenv("OPENAI_BASE_URL")
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    return RagResponder(
+        index=index,
+        embeddings_api=embeddings_api,
+        embedding_model=embedding_model,
+        chat_completions_api=client.chat.completions,
+        chat_model=chat_model,
+        top_k=args.top_k,
+    )
+
+
+def run_rag_chat(args: argparse.Namespace, responder: RagResponder) -> None:
+    session = RagChatSession(
+        responder,
+        memory=JsonRagChatMemory(args.memory_file),
+        keep_last=args.keep_last,
+        candidate_k=args.candidate_k,
+        min_score=0.2 if args.min_score is None else args.min_score,
+        rewrite_query=True if not args.rewrite_query else args.rewrite_query,
+    )
+    print(f"AI Advent RAG chat (memory: {args.memory_file})")
+    print("Use /goal, /clarify, /constraint, /term, /memory, /exit.\n")
+
+    while True:
+        try:
+            message = input("You: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nBye!")
+            return
+        if message.lower() in EXIT_COMMANDS:
+            print("Bye!")
+            return
+        if not message:
+            continue
+        if handle_rag_chat_command(session, message):
+            continue
+
+        answer = session.ask(message)
+        print_grounded_rag_answer(answer)
+
+
+def handle_rag_chat_command(session: RagChatSession, message: str) -> bool:
+    parts = split_command(message)
+    if not parts:
+        return False
+    command = parts[0].lower()
+    if command == "/goal":
+        if len(parts) < 2:
+            print("Usage: /goal TEXT")
+            return True
+        session.set_goal(" ".join(parts[1:]))
+        print("RAG task goal saved.")
+        return True
+    if command == "/clarify":
+        if len(parts) < 2:
+            print("Usage: /clarify TEXT")
+            return True
+        session.add_clarification(" ".join(parts[1:]))
+        print("RAG clarification saved.")
+        return True
+    if command == "/constraint":
+        if len(parts) < 2:
+            print("Usage: /constraint TEXT")
+            return True
+        session.add_constraint(" ".join(parts[1:]))
+        print("RAG constraint saved.")
+        return True
+    if command == "/term":
+        if len(parts) < 3:
+            print("Usage: /term KEY VALUE")
+            return True
+        session.set_term(parts[1], " ".join(parts[2:]))
+        print(f"RAG term saved: {parts[1]}")
+        return True
+    if command == "/memory":
+        print(format_rag_chat_context(session.state))
+        return True
+    return False
 
 
 def _index_embedding_provider(args: argparse.Namespace) -> str:

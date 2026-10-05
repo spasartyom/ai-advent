@@ -372,6 +372,34 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.min_score, 0.25)
         self.assertEqual(args.candidate_k, 10)
 
+    def test_rag_chat_command_is_available(self) -> None:
+        args = parse_args(
+            [
+                "rag",
+                "chat",
+                "--index",
+                ".ai-advent/document-index.json",
+                "--memory-file",
+                ".ai-advent/test-rag-chat.json",
+                "--keep-last",
+                "8",
+                "--embedding-provider",
+                "ollama",
+            ]
+        )
+
+        self.assertEqual(args.command, "rag")
+        self.assertEqual(args.rag_command, "chat")
+        self.assertEqual(args.memory_file, ".ai-advent/test-rag-chat.json")
+        self.assertEqual(args.keep_last, 8)
+        self.assertEqual(args.embedding_provider, "ollama")
+
+    def test_rag_chat_scenarios_command_is_available(self) -> None:
+        args = parse_args(["rag", "chat-scenarios"])
+
+        self.assertEqual(args.command, "rag")
+        self.assertEqual(args.rag_command, "chat-scenarios")
+
     def test_rag_eval_questions_command_is_available(self) -> None:
         args = parse_args(["rag", "eval-questions"])
 
