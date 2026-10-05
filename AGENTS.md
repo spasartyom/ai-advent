@@ -2,10 +2,11 @@
 
 This repository is a learning project for an AI agents challenge.
 
-Current state: week 4 is complete and the next week should build on the Study Coach Agent plus MCP tooling.
+Current state: week 5 has started and builds RAG capabilities on top of the Study Coach Agent plus MCP tooling.
 Week 1 is archived in Git tags and should not shape new implementation unless we explicitly need to inspect old exercises.
 Week 3 developed the CLI agent into a Study Coach Agent.
 Week 4 connected the Study Coach to MCP tools, scheduled background work, tool pipelines, and multi-server orchestration.
+Week 5 adds local document indexing and the first RAG question-answer flow.
 
 ## Challenge State
 
@@ -42,6 +43,11 @@ Week 4 is complete:
 - `w4_d4` / Day 19 - composed MCP tool pipeline for searching, summarizing, and saving notes
 - `w4_d5` / Day 20 - multi-server MCP orchestration across lessons, notes, and scheduler servers
 
+Week 5 has started:
+
+- `w5_d1` / Day 21 - local document indexing with chunking, embeddings, JSON vector index, metadata, and chunking strategy comparison
+- `w5_d2` / Day 22 - first RAG request with retrieval, RAG prompt construction, with-RAG/without-RAG comparison, and 10 control questions
+
 ## Current Product Shape
 
 The active product is a CLI agent:
@@ -66,6 +72,15 @@ ai-advent mcp orchestrate mcp
 ai-advent worker --once
 ```
 
+Week 5 also adds document index and RAG commands:
+
+```bash
+ai-advent index build README.md AGENTS.md ai_advent tests --embedding-provider ollama --embedding-model nomic-embed-text
+ai-advent rag ask "Какие команды CLI управляют task state?"
+ai-advent rag compare "Какие команды CLI управляют task state?"
+ai-advent rag eval-questions
+```
+
 The agent talks to an OpenAI-compatible Chat Completions API. Provider settings
 come from environment variables, usually loaded from `.env`:
 
@@ -75,6 +90,8 @@ come from environment variables, usually loaded from `.env`:
 - `AI_ADVENT_MEMORY_FILE`
 - `AI_ADVENT_SCHEDULER_FILE`
 - `AI_ADVENT_NOTES_DIR`
+- `AI_ADVENT_EMBEDDING_MODEL`
+- `AI_ADVENT_OLLAMA_BASE_URL`
 
 Fallback OpenAI-style names are also supported:
 
@@ -106,10 +123,12 @@ Responsibilities:
   `--keep-last`, and `--branch`;
 - support `/checkpoint` and `/branch ...` commands for branching experiments;
 - expose `ai-advent mcp list-tools`, `call-tool`, `run-pipeline`, and `orchestrate`;
-- expose `ai-advent worker` for running due scheduler tasks.
+- expose `ai-advent worker` for running due scheduler tasks;
+- expose `ai-advent index build` for document indexing;
+- expose `ai-advent rag ask`, `compare`, and `eval-questions` for first RAG workflows.
 
 This file should stay thin. Avoid putting agent logic, memory logic, token
-accounting, context strategies, MCP transport logic, scheduler persistence, pipeline logic, or orchestration logic here.
+accounting, context strategies, MCP transport logic, scheduler persistence, pipeline logic, orchestration logic, document loading, chunking, embedding provider logic, vector search, or RAG prompt construction here.
 
 ### `ai_advent/agent.py`
 
@@ -313,6 +332,96 @@ Responsibilities:
 - support environment overrides for `AI_ADVENT_NOTES_DIR` and `AI_ADVENT_SCHEDULER_FILE`;
 - return `OrchestrationResult` with step details, saved note path, reminder id, summary, and scheduler summary.
 
+### `ai_advent/documents.py`
+
+Document loading for local RAG indexing.
+
+Responsibilities:
+
+- load supported text documents from files and directories;
+- support Markdown, Python, plain text, and reStructuredText inputs;
+- skip generated/cache directories such as `.git`, `.venv`, and `__pycache__`;
+- return `Document` values with source, title, and text.
+
+### `ai_advent/chunking.py`
+
+Document chunking strategies.
+
+Current implementations:
+
+- fixed-size chunking by character window with configurable overlap;
+- structure-aware chunking by Markdown headings and top-level Python `def`/`class` blocks;
+- chunking comparison stats with chunk count, average size, minimum size, and maximum size.
+
+Responsibilities:
+
+- create chunks with `chunk_id`, `source`, `title`, `section`, and `text`;
+- keep chunking deterministic and independent from embeddings or model calls;
+- preserve metadata needed for retrieval debugging, sources, and later citations.
+
+### `ai_advent/embeddings.py`
+
+Embedding provider adapters.
+
+Current providers:
+
+- OpenAI-compatible embeddings API through the shared `EmbeddingsAPI` protocol;
+- deterministic `HashEmbeddingAPI` for offline tests and demos;
+- local `OllamaEmbeddingAPI` through Ollama `/api/embed`.
+
+Responsibilities:
+
+- normalize embedding responses to lists of float vectors;
+- keep provider-specific HTTP or SDK details outside indexing and RAG code;
+- support offline tests without network calls or external services.
+
+### `ai_advent/vector_index.py`
+
+JSON-backed local vector index.
+
+Responsibilities:
+
+- store indexed chunks with embeddings and metadata;
+- save and load JSON indexes;
+- compute cosine similarity;
+- return top-K `SearchResult` values for a query embedding.
+
+### `ai_advent/indexing.py`
+
+Document indexing pipeline for Day 21.
+
+Responsibilities:
+
+- load documents from user-provided paths;
+- compare fixed-size and structure-aware chunking strategies;
+- generate embeddings for selected chunks;
+- save the local JSON vector index;
+- return `IndexBuildResult` with index, document count, total characters, and saved path.
+
+### `ai_advent/rag.py`
+
+First RAG request pipeline for Day 22.
+
+Responsibilities:
+
+- embed the user question;
+- retrieve relevant chunks from `VectorIndex`;
+- build a RAG prompt that includes question, retrieved context, scores, and chunk metadata;
+- call the low-level chat helper for a with-RAG answer;
+- call the low-level chat helper for a without-RAG answer in comparison mode;
+- return structured `RagAnswer` and `RagComparison` values.
+
+### `ai_advent/rag_eval.py`
+
+Control-question fixture for RAG evaluation.
+
+Responsibilities:
+
+- define 10 control questions over the project knowledge base;
+- record expected answer content and expected sources for each question;
+- format the questions for `ai-advent rag eval-questions`;
+- stay deterministic and offline.
+
 ### `ai_advent/mcp_servers/`
 
 Local MCP servers for Study Coach tools.
@@ -485,6 +594,71 @@ CLI commands:
 Keep deterministic tool plumbing testable without real network calls or real model calls.
 Use injected callers or fake orchestrators in tests.
 
+### Week 5 Document Indexing
+
+Day 21 adds a local document indexing pipeline.
+
+CLI commands:
+
+- `ai-advent index build PATH [PATH ...]`
+- `ai-advent index build README.md AGENTS.md ai_advent tests --offline-embeddings`
+- `ai-advent index build README.md AGENTS.md ai_advent tests --embedding-provider ollama --embedding-model nomic-embed-text`
+- `ai-advent index build README.md AGENTS.md ai_advent tests --embedding-provider openai --embedding-model text-embedding-3-small`
+
+Supported embedding providers:
+
+- `openai` - OpenAI-compatible embeddings endpoint through the OpenAI SDK;
+- `ollama` - local Ollama `/api/embed`, usually with `nomic-embed-text`;
+- `offline` - deterministic local hash embeddings for tests and demos.
+
+Default index file:
+
+```text
+.ai-advent/document-index.json
+```
+
+The JSON index stores:
+
+- embedding model;
+- selected chunking strategy;
+- chunking comparison stats;
+- chunks with `chunk_id`, `source`, `title`, `section`, `text`, and `embedding`.
+
+Day 21 compares two chunking strategies:
+
+- `fixed` - fixed character windows with overlap;
+- `structure` - Markdown heading and Python top-level symbol chunking, with max-size splitting.
+
+### Week 5 First RAG Request
+
+Day 22 adds the first question-answer RAG flow.
+
+CLI commands:
+
+- `ai-advent rag ask QUESTION`
+- `ai-advent rag compare QUESTION`
+- `ai-advent rag eval-questions`
+
+Current flow:
+
+```text
+question -> query embedding -> vector search top-K -> RAG prompt -> Chat Completions answer
+```
+
+`rag compare` makes two chat calls:
+
+1. without RAG, using only the question and a Study Coach system prompt;
+2. with RAG, using retrieved chunks and chunk metadata in the prompt.
+
+The RAG command prints retrieved chunks with similarity score, source, section, and chunk id.
+The command currently requires a Chat Completions API key for answer generation, even when query embeddings come from Ollama or offline hash embeddings.
+
+Day 22 includes 10 control questions in `rag_eval.py`.
+Each question records the expected answer content and expected sources for manual quality comparison.
+
+Keep Day 22 RAG explicit through CLI commands and `rag.py`.
+Do not hide automatic RAG retrieval inside `Agent.run_turn` until a future day explicitly requires a production-like chat integration.
+
 ### `tests/`
 
 Tests use fake Chat Completions APIs rather than real network calls.
@@ -507,6 +681,10 @@ Current tests cover:
 - scheduler storage and due-task behavior;
 - study note pipeline behavior;
 - multi-server orchestration behavior;
+- document loading, chunking, embeddings adapters, vector index persistence, and index search;
+- document index CLI command parsing;
+- RAG prompt construction, retrieval, with-RAG answers, and with/without-RAG comparison;
+- RAG CLI command parsing and control-question formatting;
 - multiline CLI paste mode;
 - defensive copying of messages;
 - usage metadata propagation;
@@ -536,6 +714,13 @@ Week 2, Week 3, and Week 4 implementations are finished. Preserve their shape un
 - Deterministic study-domain behavior belongs in `study_content.py` and `scheduler.py`.
 - Tool composition belongs in `pipeline.py`.
 - Multi-server coordination belongs in `orchestration.py`.
+- Document loading belongs in `documents.py`.
+- Chunking belongs in `chunking.py`.
+- Embedding provider adapters belong in `embeddings.py`.
+- Vector storage and similarity search belong in `vector_index.py`.
+- Document index construction belongs in `indexing.py`.
+- RAG retrieval, prompt construction, and with/without-RAG comparison belong in `rag.py`.
+- RAG control questions belong in `rag_eval.py`.
 
 Preferred design:
 
@@ -543,6 +728,7 @@ Preferred design:
 - keep `chat.py` as a low-level API adapter;
 - keep `Agent` as the main user-facing domain object;
 - keep MCP tool calls explicit through CLI commands and MCP helpers rather than hiding automatic tool selection inside `Agent`;
+- keep RAG retrieval explicit through CLI commands and RAG helpers until a future day explicitly requires integrating it into the interactive agent loop;
 - introduce small strategy or storage classes only when the next task needs
   them;
 - keep tests offline with fake API objects.
