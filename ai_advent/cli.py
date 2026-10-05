@@ -14,6 +14,12 @@ from ai_advent.context import (
     StickyFactsContextStrategy,
     SummaryContextStrategy,
 )
+from ai_advent.embeddings import HashEmbeddingAPI, OllamaEmbeddingAPI
+from ai_advent.indexing import (
+    IndexBuildResult,
+    build_document_index,
+    format_chunking_comparison,
+)
 from ai_advent.memory import JsonFileMemory
 from ai_advent.mcp_client import McpTool, McpToolResult, call_tool_sync, list_tools_sync
 from ai_advent.orchestration import (
@@ -39,12 +45,17 @@ except ModuleNotFoundError:
     OpenAI = None
 
 DEFAULT_MODEL = "gpt-5.6-luna"
+DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
+DEFAULT_OLLAMA_EMBEDDING_MODEL = "nomic-embed-text"
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 EXIT_COMMANDS = {"/exit", "/quit"}
 PASTE_COMMAND = "/paste"
 SEND_COMMAND = "/send"
 API_KEY_ENV = "AI_ADVENT_API_KEY"
 BASE_URL_ENV = "AI_ADVENT_BASE_URL"
 MODEL_ENV = "AI_ADVENT_MODEL"
+EMBEDDING_MODEL_ENV = "AI_ADVENT_EMBEDDING_MODEL"
+OLLAMA_BASE_URL_ENV = "AI_ADVENT_OLLAMA_BASE_URL"
 MEMORY_FILE_ENV = "AI_ADVENT_MEMORY_FILE"
 SCHEDULER_FILE_ENV = "AI_ADVENT_SCHEDULER_FILE"
 NOTES_DIR_ENV = "AI_ADVENT_NOTES_DIR"
@@ -846,6 +857,71 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="stdio server command. Defaults to the local AI Advent study server.",
     )
 
+    index_parser = subparsers.add_parser(
+        "index",
+        help="build a local document embedding index",
+    )
+    index_subparsers = index_parser.add_subparsers(dest="index_command")
+    build_index_parser = index_subparsers.add_parser(
+        "build",
+        help="chunk documents, generate embeddings, and save a JSON index",
+    )
+    build_index_parser.add_argument(
+        "paths",
+        nargs="+",
+        help="files or directories to include in the index",
+    )
+    build_index_parser.add_argument(
+        "--output",
+        default=".ai-advent/document-index.json",
+        help="JSON index output path",
+    )
+    build_index_parser.add_argument(
+        "--strategy",
+        choices=("fixed", "structure"),
+        default="structure",
+        help="chunking strategy used for the saved index",
+    )
+    build_index_parser.add_argument(
+        "--fixed-chunk-size",
+        type=int,
+        default=1200,
+        help="character size for fixed chunking",
+    )
+    build_index_parser.add_argument(
+        "--fixed-overlap",
+        type=int,
+        default=150,
+        help="character overlap for fixed chunking",
+    )
+    build_index_parser.add_argument(
+        "--structure-max-chunk-size",
+        type=int,
+        default=1800,
+        help="maximum character size for structure-aware chunks",
+    )
+    build_index_parser.add_argument(
+        "--embedding-model",
+        default=None,
+        help="embedding model name; defaults to AI_ADVENT_EMBEDDING_MODEL",
+    )
+    build_index_parser.add_argument(
+        "--embedding-provider",
+        choices=("openai", "offline", "ollama"),
+        default=None,
+        help="embedding provider used to build the index",
+    )
+    build_index_parser.add_argument(
+        "--ollama-url",
+        default=None,
+        help="Ollama base URL; defaults to AI_ADVENT_OLLAMA_BASE_URL or localhost",
+    )
+    build_index_parser.add_argument(
+        "--offline-embeddings",
+        action="store_true",
+        help="use deterministic local hash embeddings instead of an API call",
+    )
+
     return parser.parse_args(argv)
 
 
@@ -859,6 +935,10 @@ def main() -> None:
 
     if args.command == "worker":
         run_worker(args)
+        return
+
+    if args.command == "index":
+        run_index_command(args)
         return
 
     if OpenAI is None:
@@ -1025,6 +1105,93 @@ def run_worker(args: argparse.Namespace) -> None:
         except KeyboardInterrupt:
             print("\nWorker stopped.")
             return
+
+
+def run_index_command(args: argparse.Namespace) -> None:
+    if args.index_command != "build":
+        print("Usage: ai-advent index build PATH [PATH ...]")
+        raise SystemExit(2)
+
+    embedding_provider = _index_embedding_provider(args)
+    embedding_model = _index_embedding_model(args, embedding_provider)
+    embeddings_api = _build_index_embeddings_api(args, embedding_provider)
+
+    try:
+        result = build_document_index(
+            args.paths,
+            embeddings_api=embeddings_api,
+            embedding_model=embedding_model,
+            output_path=args.output,
+            strategy=args.strategy,
+            fixed_chunk_size=args.fixed_chunk_size,
+            fixed_overlap=args.fixed_overlap,
+            structure_max_chunk_size=args.structure_max_chunk_size,
+        )
+    except (RuntimeError, ValueError) as error:
+        print(f"Index error: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
+
+    print_index_build_result(result)
+
+
+def _index_embedding_provider(args: argparse.Namespace) -> str:
+    if args.offline_embeddings:
+        return "offline"
+    return args.embedding_provider or "openai"
+
+
+def _index_embedding_model(args: argparse.Namespace, provider: str) -> str:
+    if args.embedding_model:
+        return args.embedding_model
+    if os.getenv(EMBEDDING_MODEL_ENV):
+        return str(os.getenv(EMBEDDING_MODEL_ENV))
+    if provider == "ollama":
+        return DEFAULT_OLLAMA_EMBEDDING_MODEL
+    if provider == "offline":
+        return "hash-local"
+    return DEFAULT_EMBEDDING_MODEL
+
+
+def _build_index_embeddings_api(args: argparse.Namespace, provider: str) -> object:
+    if provider == "offline":
+        return HashEmbeddingAPI()
+    if provider == "ollama":
+        base_url = (
+            args.ollama_url
+            or os.getenv(OLLAMA_BASE_URL_ENV)
+            or os.getenv("OLLAMA_HOST")
+            or DEFAULT_OLLAMA_BASE_URL
+        )
+        return OllamaEmbeddingAPI(base_url)
+
+    if OpenAI is None:
+        print(
+            "OpenAI SDK is not installed. Run: python -m pip install -e .",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    api_key = os.getenv(API_KEY_ENV) or os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        print(
+            f"{API_KEY_ENV} is not set. Use --embedding-provider offline or ollama for a local demo.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    base_url = os.getenv(BASE_URL_ENV) or os.getenv("OPENAI_BASE_URL")
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    return client.embeddings
+
+
+def print_index_build_result(result: IndexBuildResult) -> None:
+    print("Document index built")
+    print(f"  saved_path: {result.saved_path}")
+    print(f"  documents: {result.document_count}")
+    print(f"  total_characters: {result.total_characters}")
+    print(f"  strategy: {result.index.chunking_strategy}")
+    print(f"  chunks: {len(result.index.chunks)}")
+    print(f"  embedding_model: {result.index.embedding_model}")
+    for line in format_chunking_comparison(result.index.comparison):
+        print(line)
 
 
 def build_mcp_env(

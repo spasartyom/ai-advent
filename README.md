@@ -1,6 +1,6 @@
 # AI Advent
 
-CLI-проект для челленджа по изучению AI-агентов. Вторая неделя построила базового CLI-агента с памятью, подсчетом токенов и стратегиями управления контекстом. Третья неделя развивает его в Study Coach Agent: учебного ассистента с явной моделью памяти и управляемым состоянием задач.
+CLI-проект для челленджа по изучению AI-агентов. Вторая неделя построила базового CLI-агента с памятью, подсчетом токенов и стратегиями управления контекстом. Третья неделя развила его в Study Coach Agent: учебного ассистента с явной моделью памяти и управляемым состоянием задач. Четвертая неделя подключила MCP-инструменты, scheduler, pipeline и orchestration. Пятая неделя начинает RAG-направление с локальной индексации документов.
 
 Задания первой недели сохранены в Git-тегах:
 
@@ -31,6 +31,8 @@ AI_ADVENT_API_KEY=sk-your-api-key
 AI_ADVENT_MODEL=gpt-5.6-luna
 AI_ADVENT_BASE_URL=https://api.openai.com/v1
 AI_ADVENT_MEMORY_FILE=.ai-advent/agent-memory.json
+AI_ADVENT_EMBEDDING_MODEL=text-embedding-3-small
+AI_ADVENT_OLLAMA_BASE_URL=http://localhost:11434
 ```
 
 Файл `.env` исключен из Git и не попадет в репозиторий.
@@ -723,3 +725,123 @@ cat demo-output/day20-scheduler.json
 ```text
 You: /study-flow mcp
 ```
+
+## Неделя 5
+
+### День 21: индексация документов
+
+Проект получил первый слой RAG-инфраструктуры: локальный пайплайн индексации документов с chunking, embeddings, JSON-хранилищем и метаданными.
+
+Индекс можно собрать из Markdown, Python, text и reStructuredText файлов:
+
+```bash
+ai-advent index build README.md AGENTS.md ai_advent tests --output .ai-advent/document-index.json --offline-embeddings
+```
+
+Флаг `--offline-embeddings` использует детерминированные локальные hash embeddings. Это удобно для демо и тестов без API-ключа.
+
+Для локальных бесплатных embeddings через Ollama установите Ollama и скачайте embedding-модель:
+
+```bash
+ollama pull nomic-embed-text
+```
+
+Сборка индекса через Ollama:
+
+```bash
+ai-advent index build README.md AGENTS.md ai_advent tests --embedding-provider ollama --embedding-model nomic-embed-text --output .ai-advent/document-index.json
+```
+
+По умолчанию Ollama ожидается на `http://localhost:11434`. Можно указать другой адрес:
+
+```bash
+ai-advent index build README.md AGENTS.md ai_advent tests --embedding-provider ollama --ollama-url http://127.0.0.1:11434
+```
+
+Или настроить `.env`:
+
+```dotenv
+AI_ADVENT_OLLAMA_BASE_URL=http://localhost:11434
+AI_ADVENT_EMBEDDING_MODEL=nomic-embed-text
+```
+
+Для реальных OpenAI-compatible embeddings настройте `.env`:
+
+```dotenv
+AI_ADVENT_API_KEY=sk-your-api-key
+AI_ADVENT_BASE_URL=https://api.openai.com/v1
+AI_ADVENT_EMBEDDING_MODEL=text-embedding-3-small
+```
+
+Команда с OpenAI-compatible embeddings API:
+
+```bash
+ai-advent index build README.md AGENTS.md ai_advent tests --output .ai-advent/document-index.json
+```
+
+По умолчанию сохраненный индекс использует structure-aware chunking. Можно выбрать fixed-size стратегию:
+
+```bash
+ai-advent index build README.md AGENTS.md ai_advent tests --strategy fixed --output .ai-advent/document-index-fixed.json --offline-embeddings
+```
+
+Настройки chunking:
+
+- `--strategy fixed|structure` - стратегия, которая попадет в сохраненный индекс.
+- `--embedding-provider openai|offline|ollama` - источник embeddings.
+- `--embedding-model MODEL` - модель embeddings, например `text-embedding-3-small` или `nomic-embed-text`.
+- `--ollama-url URL` - адрес локального Ollama API.
+- `--fixed-chunk-size 1200` - размер fixed-size чанка в символах.
+- `--fixed-overlap 150` - overlap между fixed-size чанками.
+- `--structure-max-chunk-size 1800` - максимальный размер structure-aware чанка.
+
+Что делает пайплайн:
+
+1. Загружает документы из указанных файлов и директорий.
+2. Сравнивает две стратегии chunking: fixed-size и structure-aware.
+3. Для выбранной стратегии создает чанки с метаданными `source`, `title`, `section`, `chunk_id`.
+4. Генерирует embedding для каждого чанка.
+5. Сохраняет локальный JSON-индекс.
+
+Пример вывода на текущем репозитории:
+
+```text
+Document index built
+  saved_path: .ai-advent/document-index.json
+  documents: 37
+  total_characters: 248850
+  strategy: structure
+  chunks: 343
+  embedding_model: text-embedding-3-small
+Chunking comparison:
+  fixed: 253 chunks, avg 1109.3 chars, min 28, max 1200
+  structure: 343 chunks, avg 722.1 chars, min 10, max 1796
+```
+
+JSON-индекс содержит выбранную стратегию, модель embeddings, сравнение стратегий и список чанков:
+
+```json
+{
+  "embedding_model": "text-embedding-3-small",
+  "chunking_strategy": "structure",
+  "comparison": [],
+  "chunks": [
+    {
+      "chunk_id": "README.md:structure:0",
+      "source": "README.md",
+      "title": "README.md",
+      "section": "AI Advent",
+      "text": "...",
+      "embedding": [0.1, -0.2]
+    }
+  ]
+}
+```
+
+Основные модули:
+
+- `ai_advent/documents.py` - загрузка документов.
+- `ai_advent/chunking.py` - fixed-size и structure-aware chunking.
+- `ai_advent/embeddings.py` - OpenAI-compatible embeddings adapter, Ollama embeddings adapter и offline hash embeddings.
+- `ai_advent/vector_index.py` - JSON vector index и cosine search.
+- `ai_advent/indexing.py` - сборка индекса и отчет сравнения стратегий.
