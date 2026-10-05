@@ -29,7 +29,7 @@ from ai_advent.orchestration import (
     run_study_orchestration_flow,
 )
 from ai_advent.pipeline import PipelineResult, run_study_note_pipeline
-from ai_advent.rag import RagAnswer, RagComparison, RagResponder
+from ai_advent.rag import RagAnswer, RagComparison, RagResponder, RagRetrievalComparison
 from ai_advent.rag_eval import format_control_questions
 from ai_advent.scheduler import DEFAULT_SCHEDULER_FILE
 from ai_advent.tokens import TokenReport
@@ -941,6 +941,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="compare answers with and without RAG",
     )
     _add_rag_query_arguments(compare_parser)
+    compare_retrieval_parser = rag_subparsers.add_parser(
+        "compare-retrieval",
+        help="compare baseline RAG with filtered, reranked, query-rewritten RAG",
+    )
+    _add_rag_query_arguments(compare_retrieval_parser)
     rag_subparsers.add_parser(
         "eval-questions",
         help="print the 10 control questions for the document index",
@@ -961,6 +966,23 @@ def _add_rag_query_arguments(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=5,
         help="number of chunks to retrieve",
+    )
+    parser.add_argument(
+        "--candidate-k",
+        type=int,
+        default=None,
+        help="number of initial retrieval candidates before filtering and reranking",
+    )
+    parser.add_argument(
+        "--min-score",
+        type=float,
+        default=None,
+        help="minimum similarity score for retrieved chunks",
+    )
+    parser.add_argument(
+        "--rewrite-query",
+        action="store_true",
+        help="rewrite the question before embedding search",
     )
     parser.add_argument(
         "--model",
@@ -1208,11 +1230,14 @@ def run_rag_command(args: argparse.Namespace) -> None:
         for line in format_control_questions():
             print(line)
         return
-    if args.rag_command not in {"ask", "compare"}:
-        print("Usage: ai-advent rag ask|compare|eval-questions ...")
+    if args.rag_command not in {"ask", "compare", "compare-retrieval"}:
+        print("Usage: ai-advent rag ask|compare|compare-retrieval|eval-questions ...")
         raise SystemExit(2)
     if args.top_k <= 0:
         print("RAG error: --top-k must be greater than zero.", file=sys.stderr)
+        raise SystemExit(1)
+    if args.candidate_k is not None and args.candidate_k <= 0:
+        print("RAG error: --candidate-k must be greater than zero.", file=sys.stderr)
         raise SystemExit(1)
 
     if OpenAI is None:
@@ -1256,7 +1281,23 @@ def run_rag_command(args: argparse.Namespace) -> None:
 
     try:
         if args.rag_command == "ask":
-            print_rag_answer(responder.answer(args.question))
+            print_rag_answer(
+                responder.answer(
+                    args.question,
+                    candidate_k=args.candidate_k,
+                    min_score=args.min_score,
+                    rewrite_query=args.rewrite_query,
+                )
+            )
+            return
+        if args.rag_command == "compare-retrieval":
+            print_rag_retrieval_comparison(
+                responder.compare_retrieval(
+                    args.question,
+                    candidate_k=args.candidate_k or max(args.top_k * 4, args.top_k),
+                    min_score=0.2 if args.min_score is None else args.min_score,
+                )
+            )
             return
         print_rag_comparison(responder.compare(args.question))
     except (RuntimeError, ValueError) as error:
@@ -1326,6 +1367,9 @@ def print_index_build_result(result: IndexBuildResult) -> None:
 
 def print_rag_answer(answer: RagAnswer) -> None:
     print("RAG answer:")
+    print(f"Search query: {answer.search_query or answer.question}")
+    print(f"Candidates before filtering: {answer.candidate_count}")
+    print()
     print(answer.answer)
     print()
     print_retrieved_chunks(answer.retrieved)
@@ -1339,6 +1383,22 @@ def print_rag_comparison(comparison: RagComparison) -> None:
     print(comparison.with_rag.answer)
     print()
     print_retrieved_chunks(comparison.with_rag.retrieved)
+
+
+def print_rag_retrieval_comparison(comparison: RagRetrievalComparison) -> None:
+    print("Baseline RAG:")
+    print(f"Search query: {comparison.baseline.search_query or comparison.question}")
+    print(f"Candidates before filtering: {comparison.baseline.candidate_count}")
+    print(comparison.baseline.answer)
+    print()
+    print_retrieved_chunks(comparison.baseline.retrieved)
+    print()
+    print("Improved RAG:")
+    print(f"Search query: {comparison.improved.search_query or comparison.question}")
+    print(f"Candidates before filtering: {comparison.improved.candidate_count}")
+    print(comparison.improved.answer)
+    print()
+    print_retrieved_chunks(comparison.improved.retrieved)
 
 
 def print_retrieved_chunks(retrieved: list[object]) -> None:

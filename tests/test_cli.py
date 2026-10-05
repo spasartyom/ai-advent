@@ -333,6 +333,26 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.rag_command, "compare")
         self.assertEqual(args.question, "Что делает pipeline Дня 19?")
 
+    def test_rag_compare_retrieval_command_accepts_filtering_options(self) -> None:
+        args = parse_args(
+            [
+                "rag",
+                "compare-retrieval",
+                "Какие метаданные есть у чанка?",
+                "--candidate-k",
+                "12",
+                "--min-score",
+                "0.35",
+                "--rewrite-query",
+            ]
+        )
+
+        self.assertEqual(args.command, "rag")
+        self.assertEqual(args.rag_command, "compare-retrieval")
+        self.assertEqual(args.candidate_k, 12)
+        self.assertEqual(args.min_score, 0.35)
+        self.assertTrue(args.rewrite_query)
+
     def test_rag_eval_questions_command_is_available(self) -> None:
         args = parse_args(["rag", "eval-questions"])
 

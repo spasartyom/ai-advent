@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 
 from ai_advent.chunking import Chunk
-from ai_advent.rag import RagResponder, build_rag_prompt
+from ai_advent.rag import RagResponder, build_rag_prompt, filter_and_rerank_results
 from ai_advent.vector_index import IndexedChunk, SearchResult, VectorIndex
 
 
@@ -31,6 +31,30 @@ class FakeChatCompletionsAPI:
             choices=[
                 SimpleNamespace(
                     message=SimpleNamespace(content=f"answer-{len(self.requests)}"),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=11,
+                completion_tokens=12,
+                total_tokens=23,
+            ),
+        )
+
+
+class RewriteAwareFakeChatCompletionsAPI(FakeChatCompletionsAPI):
+    def create(self, **kwargs: object) -> object:
+        self.requests.append(kwargs)
+        messages = kwargs["messages"]
+        assert isinstance(messages, list)
+        system_message = messages[0]["content"]
+        if "переписываешь вопросы" in system_message:
+            content = "memory command"
+        else:
+            content = f"answer-{len(self.requests)}"
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=content),
                 )
             ],
             usage=SimpleNamespace(
@@ -102,6 +126,70 @@ class RagTests(unittest.TestCase):
         self.assertIn("section: Day 22", prompt)
         self.assertIn("chunk_id: chunk-1", prompt)
         self.assertIn("RAG uses retrieved chunks.", prompt)
+
+    def test_filter_and_rerank_results_applies_threshold_and_keyword_overlap(self) -> None:
+        weak = SearchResult(
+            chunk=Chunk(
+                chunk_id="weak",
+                source="weak.md",
+                title="weak.md",
+                section="Weak",
+                text="unrelated topic",
+            ),
+            score=0.1,
+        )
+        lexical_match = SearchResult(
+            chunk=Chunk(
+                chunk_id="match",
+                source="match.md",
+                title="match.md",
+                section="Match",
+                text="memory command details",
+            ),
+            score=0.5,
+        )
+        semantic_only = SearchResult(
+            chunk=Chunk(
+                chunk_id="semantic",
+                source="semantic.md",
+                title="semantic.md",
+                section="Semantic",
+                text="general details",
+            ),
+            score=0.5,
+        )
+
+        results = filter_and_rerank_results(
+            "memory command",
+            [weak, semantic_only, lexical_match],
+            top_k=2,
+            min_score=0.2,
+        )
+
+        self.assertEqual([result.chunk.chunk_id for result in results], ["match", "semantic"])
+
+    def test_compare_retrieval_rewrites_query_and_reports_improved_candidates(self) -> None:
+        chat_api = RewriteAwareFakeChatCompletionsAPI()
+        responder = RagResponder(
+            index=_test_index(),
+            embeddings_api=FakeEmbeddingsAPI(),
+            embedding_model="fake-embedding",
+            chat_completions_api=chat_api,
+            chat_model="fake-chat",
+            top_k=1,
+        )
+
+        comparison = responder.compare_retrieval(
+            "Which commands manage memory?",
+            candidate_k=2,
+            min_score=0.1,
+        )
+
+        self.assertEqual(comparison.baseline.search_query, "Which commands manage memory?")
+        self.assertEqual(comparison.improved.search_query, "memory command")
+        self.assertEqual(comparison.improved.candidate_count, 2)
+        self.assertEqual(comparison.improved.retrieved[0].chunk.chunk_id, "chunk-memory")
+        self.assertEqual(len(chat_api.requests), 3)
 
     def test_rag_rejects_empty_question(self) -> None:
         responder = RagResponder(

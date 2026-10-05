@@ -905,3 +905,54 @@ ai-advent rag eval-questions
 
 - `ai_advent/rag.py` - RAG responder, prompt builder и сравнение with/without RAG.
 - `ai_advent/rag_eval.py` - 10 контрольных вопросов с ожиданиями и ожидаемыми источниками.
+
+### День 23: реранкинг, фильтрация и query rewrite
+
+RAG-пайплайн получил второй этап после vector search:
+
+```text
+вопрос -> query rewrite -> embedding search top-N -> similarity filter -> heuristic rerank -> top-K -> RAG prompt
+```
+
+Новый режим сравнения:
+
+```bash
+ai-advent rag compare-retrieval "Какие метаданные сохраняются у каждого чанка?" --embedding-provider ollama --embedding-model nomic-embed-text --index .ai-advent/document-index.json --top-k 5 --candidate-k 20 --min-score 0.2
+```
+
+Что сравнивается:
+
+1. Baseline RAG: обычный поиск `top-k` без query rewrite, threshold и reranking.
+2. Improved RAG: переписывает вопрос в поисковый запрос, берет больше кандидатов через `candidate-k`, отсекает слабые результаты через `min-score`, затем переупорядочивает кандидатов эвристикой `similarity + keyword overlap`.
+
+Параметры:
+
+- `--candidate-k 20` - сколько кандидатов взять до фильтрации и реранкинга.
+- `--min-score 0.2` - минимальный similarity score для допуска чанка в контекст.
+- `--top-k 5` - сколько чанков оставить после фильтрации и реранкинга.
+- `--rewrite-query` - включает query rewrite для обычного `rag ask`.
+
+Обычный RAG-запрос тоже поддерживает улучшения:
+
+```bash
+ai-advent rag ask "Как собрать индекс через Ollama?" --embedding-provider ollama --embedding-model nomic-embed-text --candidate-k 20 --min-score 0.2 --rewrite-query
+```
+
+Для offline demo:
+
+```bash
+ai-advent rag compare-retrieval "Какие две стратегии chunking реализованы?" --offline-embeddings --index .ai-advent/document-index-offline.json --top-k 5 --candidate-k 20 --min-score 0.1
+```
+
+В выводе видно:
+
+- `Search query` - исходный или переписанный поисковый запрос;
+- `Candidates before filtering` - сколько чанков было найдено до фильтрации;
+- итоговые retrieved chunks после фильтрации и реранкинга;
+- `score`, `source`, `section`, `chunk_id` для каждого оставшегося чанка.
+
+Реализация остается детерминированной и тестируемой:
+
+- query rewrite - отдельный Chat Completions вызов;
+- similarity threshold - простой числовой фильтр;
+- reranking - локальная эвристика поверх similarity и пересечения ключевых слов.
