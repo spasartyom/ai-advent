@@ -2,9 +2,10 @@
 
 This repository is a learning project for an AI agents challenge.
 
-Current state: week 2 is complete and week 3 has started. Week 1 is archived in
-Git tags and should not shape new implementation unless we explicitly need to
-inspect old exercises. Week 3 develops the CLI agent into a Study Coach Agent.
+Current state: week 4 is complete and the next week should build on the Study Coach Agent plus MCP tooling.
+Week 1 is archived in Git tags and should not shape new implementation unless we explicitly need to inspect old exercises.
+Week 3 developed the CLI agent into a Study Coach Agent.
+Week 4 connected the Study Coach to MCP tools, scheduled background work, tool pipelines, and multi-server orchestration.
 
 ## Challenge State
 
@@ -24,7 +25,7 @@ Week 2 is complete:
 - `w2_d4` / Day 9 - summary-based context compression
 - `w2_d5` / Day 10 - sliding window, sticky facts, and branching strategies
 
-Week 3 has started:
+Week 3 is complete:
 
 - `w3_d1` / Day 11 - explicit memory layers for short-term, working, and
   long-term memory
@@ -32,6 +33,14 @@ Week 3 has started:
 - `w3_d3` / Day 13 - formal task state with stage, current step, expected action, and pause/resume
 - `w3_d4` / Day 14 - separate invariants that are included in every request and can trigger refusal
 - `w3_d5` / Day 15 - controlled task lifecycle transitions
+
+Week 4 is complete:
+
+- `w4_d1` / Day 16 - MCP client and local Study Coach MCP server tool discovery
+- `w4_d2` / Day 17 - first real MCP tool call through `get_lesson` and `/lesson`
+- `w4_d3` / Day 18 - scheduler tools and background worker for study reminders
+- `w4_d4` / Day 19 - composed MCP tool pipeline for searching, summarizing, and saving notes
+- `w4_d5` / Day 20 - multi-server MCP orchestration across lessons, notes, and scheduler servers
 
 ## Current Product Shape
 
@@ -47,6 +56,16 @@ The default command also starts the same agent:
 ai-advent
 ```
 
+Week 4 also adds MCP and worker commands:
+
+```bash
+ai-advent mcp list-tools
+ai-advent mcp call-tool get_lesson --arguments '{"topic":"mcp"}'
+ai-advent mcp run-pipeline mcp
+ai-advent mcp orchestrate mcp
+ai-advent worker --once
+```
+
 The agent talks to an OpenAI-compatible Chat Completions API. Provider settings
 come from environment variables, usually loaded from `.env`:
 
@@ -54,6 +73,8 @@ come from environment variables, usually loaded from `.env`:
 - `AI_ADVENT_MODEL`
 - `AI_ADVENT_BASE_URL`
 - `AI_ADVENT_MEMORY_FILE`
+- `AI_ADVENT_SCHEDULER_FILE`
+- `AI_ADVENT_NOTES_DIR`
 
 Fallback OpenAI-style names are also supported:
 
@@ -80,12 +101,15 @@ Responsibilities:
 - support `/profile ...` commands for explicit user profile personalization;
 - support `/task ...` commands for explicit task state updates;
 - support `/invariant ...` commands for explicit invariant management;
+- support MCP-backed interactive commands: `/lesson TOPIC`, `/remind DUE_IN_SECONDS TITLE`, `/reminders`, `/note QUERY`, and `/study-flow QUERY`;
 - expose `--context-strategy full|summary|sliding-window|facts|branch`,
   `--keep-last`, and `--branch`;
-- support `/checkpoint` and `/branch ...` commands for branching experiments.
+- support `/checkpoint` and `/branch ...` commands for branching experiments;
+- expose `ai-advent mcp list-tools`, `call-tool`, `run-pipeline`, and `orchestrate`;
+- expose `ai-advent worker` for running due scheduler tasks.
 
 This file should stay thin. Avoid putting agent logic, memory logic, token
-accounting, or context strategies here.
+accounting, context strategies, MCP transport logic, scheduler persistence, pipeline logic, or orchestration logic here.
 
 ### `ai_advent/agent.py`
 
@@ -209,6 +233,100 @@ Responsibilities:
 - reject final `done` before `validation`;
 - convert task state to and from the JSON memory shape;
 
+### `ai_advent/mcp_client.py`
+
+Low-level MCP client adapter.
+
+Responsibilities:
+
+- define `McpTool` and `McpToolResult`;
+- provide synchronous wrappers over async MCP client calls;
+- connect either to a Streamable HTTP MCP URL or to a stdio server command;
+- default to the local Study Coach server command: `python -m ai_advent.mcp_servers.study`;
+- normalize MCP tool metadata and tool result content;
+- stay independent from `Agent` memory, task state, and context strategies.
+
+### `ai_advent/study_content.py`
+
+Deterministic local study content and note helpers used by MCP servers.
+
+Responsibilities:
+
+- store small local lesson fixtures;
+- list, get, and search lesson content;
+- create deterministic study-note summaries without LLM calls;
+- save Markdown notes under `AI_ADVENT_NOTES_DIR` or `.ai-advent/notes`;
+- provide `slugify` for note filenames.
+
+### `ai_advent/scheduler.py`
+
+JSON-backed study reminder scheduler.
+
+Responsibilities:
+
+- create reminders with pending/completed state;
+- list reminders grouped by status;
+- complete due reminders through `run_due_tasks`;
+- persist scheduler state in `{"reminders": [...], "runs": [...]}`;
+- default to `.ai-advent/study-scheduler.json`;
+- validate storage shape and create parent directories on save.
+
+### `ai_advent/pipeline.py`
+
+Single-server MCP tool pipeline for study notes.
+
+Current flow:
+
+```text
+search_lessons -> summarize_note -> save_note
+```
+
+Responsibilities:
+
+- validate the query;
+- call MCP tools through an injected caller or the default `call_tool_sync`;
+- pass structured output from one tool to the next;
+- raise a clear runtime error when any MCP tool returns `is_error`;
+- return `PipelineResult` with step details, saved note path, and summary.
+
+### `ai_advent/orchestration.py`
+
+Multi-server MCP orchestration layer.
+
+Default servers:
+
+- `lessons` - `python -m ai_advent.mcp_servers.lessons`
+- `notes` - `python -m ai_advent.mcp_servers.notes`
+- `scheduler` - `python -m ai_advent.mcp_servers.scheduler`
+
+Current flow:
+
+```text
+lessons.search_lessons -> notes.summarize_note -> notes.save_note -> scheduler.create_reminder -> scheduler.run_due_tasks
+```
+
+Responsibilities:
+
+- define server configs and registered tool metadata;
+- discover tools across all registered MCP servers;
+- route tool calls by tool name to the first server that exposes that name;
+- support environment overrides for `AI_ADVENT_NOTES_DIR` and `AI_ADVENT_SCHEDULER_FILE`;
+- return `OrchestrationResult` with step details, saved note path, reminder id, summary, and scheduler summary.
+
+### `ai_advent/mcp_servers/`
+
+Local MCP servers for Study Coach tools.
+
+Current servers:
+
+- `study.py` exposes all local tools in one stdio MCP server for simple demos and default MCP CLI usage.
+- `lessons.py` exposes `list_lessons`, `get_lesson`, and `search_lessons`.
+- `notes.py` exposes `summarize_note` and `save_note`.
+- `scheduler.py` exposes `create_reminder`, `list_reminders`, and `run_due_tasks`.
+
+Keep tool implementations thin.
+Domain behavior belongs in `study_content.py` and `scheduler.py`, while server files should mainly adapt functions to MCP.
+
 ### Week 3 Memory Layers
 
 Day 11 uses a Study Coach framing:
@@ -289,6 +407,84 @@ The CLI commands are:
 - `/invariant add ID TEXT`
 - `/invariant remove ID`
 
+### Week 4 MCP Tools
+
+Day 16 introduces MCP tool discovery.
+
+CLI commands:
+
+- `ai-advent mcp list-tools`
+- `ai-advent mcp list-tools --url http://127.0.0.1:8000/mcp`
+- `ai-advent mcp list-tools --server-command "python path/to/server.py"`
+
+The default stdio server is:
+
+```bash
+python -m ai_advent.mcp_servers.study
+```
+
+Day 17 introduces direct MCP tool calls and the first agent-facing MCP command.
+
+CLI commands:
+
+- `ai-advent mcp call-tool get_lesson --arguments '{"topic":"mcp"}'`
+- `/lesson TOPIC`
+
+`/lesson` calls `get_lesson`, prints the MCP result, then passes the result into `Agent.run_turn` as study material.
+
+### Week 4 Scheduler
+
+Day 18 adds scheduler tools exposed through MCP:
+
+- `create_reminder(title: str, due_in_seconds: int = 0, note: str = "") -> dict`
+- `list_reminders() -> dict`
+- `run_due_tasks() -> dict`
+
+Default scheduler file:
+
+```text
+.ai-advent/study-scheduler.json
+```
+
+CLI commands:
+
+- `ai-advent mcp call-tool create_reminder --arguments '{"title":"Review MCP","due_in_seconds":0}'`
+- `ai-advent worker --once`
+- `ai-advent worker --interval 60`
+- `/remind DUE_IN_SECONDS TITLE`
+- `/reminders`
+
+The worker calls the MCP `run_due_tasks` tool, prints the result, and either exits with `--once` or sleeps for `--interval` seconds.
+
+### Week 4 Pipelines And Orchestration
+
+Day 19 adds a single-server study-note pipeline:
+
+```text
+search_lessons -> summarize_note -> save_note
+```
+
+CLI commands:
+
+- `ai-advent mcp run-pipeline QUERY`
+- `ai-advent mcp run-pipeline QUERY --notes-dir PATH`
+- `/note QUERY`
+
+Day 20 adds multi-server orchestration:
+
+```text
+lessons.search_lessons -> notes.summarize_note -> notes.save_note -> scheduler.create_reminder -> scheduler.run_due_tasks
+```
+
+CLI commands:
+
+- `ai-advent mcp orchestrate QUERY`
+- `ai-advent mcp orchestrate QUERY --notes-dir PATH --scheduler-file PATH --remind-in SECONDS`
+- `/study-flow QUERY`
+
+Keep deterministic tool plumbing testable without real network calls or real model calls.
+Use injected callers or fake orchestrators in tests.
+
 ### `tests/`
 
 Tests use fake Chat Completions APIs rather than real network calls.
@@ -306,6 +502,11 @@ Current tests cover:
 - API usage token reporting;
 - full and summary context strategies;
 - sliding window, sticky facts, and branching context workflows;
+- MCP client command parsing and MCP output formatting;
+- MCP-backed `/lesson`, `/remind`, `/reminders`, `/note`, and `/study-flow` command handling;
+- scheduler storage and due-task behavior;
+- study note pipeline behavior;
+- multi-server orchestration behavior;
 - multiline CLI paste mode;
 - defensive copying of messages;
 - usage metadata propagation;
@@ -323,20 +524,25 @@ python3 -m unittest discover -s tests
 Do not reintroduce the week 1 comparison commands into active code. They live in
 tags now.
 
-Week 2 implementation is finished. Preserve its shape unless a future week
-explicitly needs a refactor:
+Week 2, Week 3, and Week 4 implementations are finished. Preserve their shape unless a future week explicitly needs a refactor:
 
 - CLI remains orchestration and terminal I/O.
 - `Agent` owns turn execution, memory state, and branch operations.
 - `chat.py` remains the provider-agnostic Chat Completions adapter.
 - `context.py` remains the place for context-management strategies.
 - `memory.py` remains the place for persistent state shape and validation.
+- MCP transport belongs in `mcp_client.py`.
+- MCP server files stay as thin adapters.
+- Deterministic study-domain behavior belongs in `study_content.py` and `scheduler.py`.
+- Tool composition belongs in `pipeline.py`.
+- Multi-server coordination belongs in `orchestration.py`.
 
 Preferred design:
 
 - keep `cli.py` as orchestration only;
 - keep `chat.py` as a low-level API adapter;
 - keep `Agent` as the main user-facing domain object;
+- keep MCP tool calls explicit through CLI commands and MCP helpers rather than hiding automatic tool selection inside `Agent`;
 - introduce small strategy or storage classes only when the next task needs
   them;
 - keep tests offline with fake API objects.

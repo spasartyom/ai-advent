@@ -261,6 +261,47 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.interval, 0.5)
         self.assertEqual(args.scheduler_file, "demo-scheduler.json")
 
+    def test_index_build_command_is_available(self) -> None:
+        args = parse_args(
+            [
+                "index",
+                "build",
+                "README.md",
+                "ai_advent",
+                "--output",
+                ".ai-advent/test-index.json",
+                "--strategy",
+                "fixed",
+                "--offline-embeddings",
+            ]
+        )
+
+        self.assertEqual(args.command, "index")
+        self.assertEqual(args.index_command, "build")
+        self.assertEqual(args.paths, ["README.md", "ai_advent"])
+        self.assertEqual(args.output, ".ai-advent/test-index.json")
+        self.assertEqual(args.strategy, "fixed")
+        self.assertTrue(args.offline_embeddings)
+
+    def test_index_build_command_accepts_ollama_embeddings(self) -> None:
+        args = parse_args(
+            [
+                "index",
+                "build",
+                "README.md",
+                "--embedding-provider",
+                "ollama",
+                "--embedding-model",
+                "nomic-embed-text",
+                "--ollama-url",
+                "http://127.0.0.1:11434",
+            ]
+        )
+
+        self.assertEqual(args.embedding_provider, "ollama")
+        self.assertEqual(args.embedding_model, "nomic-embed-text")
+        self.assertEqual(args.ollama_url, "http://127.0.0.1:11434")
+
     def test_build_mcp_env_includes_scheduler_file_when_present(self) -> None:
         self.assertEqual(
             build_mcp_env("demo-scheduler.json"),
