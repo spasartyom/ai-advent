@@ -845,3 +845,63 @@ JSON-индекс содержит выбранную стратегию, мод
 - `ai_advent/embeddings.py` - OpenAI-compatible embeddings adapter, Ollama embeddings adapter и offline hash embeddings.
 - `ai_advent/vector_index.py` - JSON vector index и cosine search.
 - `ai_advent/indexing.py` - сборка индекса и отчет сравнения стратегий.
+
+### День 22: первый RAG-запрос
+
+Проект получил первый RAG-пайплайн поверх локального JSON-индекса:
+
+```text
+вопрос -> embedding вопроса -> поиск релевантных чанков -> RAG prompt -> ответ LLM
+```
+
+Перед запросом соберите индекс, например через Ollama:
+
+```bash
+ollama pull nomic-embed-text
+ai-advent index build README.md AGENTS.md ai_advent tests --embedding-provider ollama --embedding-model nomic-embed-text --output .ai-advent/document-index.json
+```
+
+Один RAG-запрос:
+
+```bash
+ai-advent rag ask "Какие команды CLI управляют task state?" --embedding-provider ollama --embedding-model nomic-embed-text --index .ai-advent/document-index.json --top-k 5
+```
+
+Сравнение ответа без RAG и с RAG:
+
+```bash
+ai-advent rag compare "Какие команды CLI управляют task state?" --embedding-provider ollama --embedding-model nomic-embed-text --index .ai-advent/document-index.json --top-k 5
+```
+
+`rag compare` делает два вызова chat-модели:
+
+1. Без RAG: вопрос отправляется модели без локального контекста.
+2. С RAG: сначала ищутся релевантные чанки, затем они добавляются в prompt вместе с вопросом.
+
+Для локального demo без Ollama можно использовать hash embeddings, если индекс тоже был собран в offline-режиме:
+
+```bash
+ai-advent index build README.md AGENTS.md ai_advent tests --offline-embeddings --output .ai-advent/document-index-offline.json
+ai-advent rag compare "Какие метаданные сохраняются у каждого чанка?" --offline-embeddings --index .ai-advent/document-index-offline.json
+```
+
+RAG-ответ печатает:
+
+- ответ модели;
+- список найденных чанков;
+- similarity score;
+- `source`, `section`, `chunk_id` для каждого найденного чанка.
+
+Контрольный набор из 10 вопросов:
+
+```bash
+ai-advent rag eval-questions
+```
+
+Каждый вопрос содержит ожидаемый смысл ответа и ожидаемые источники.
+Этот набор нужен для ручного сравнения качества режимов без RAG и с RAG.
+
+Основные модули:
+
+- `ai_advent/rag.py` - RAG responder, prompt builder и сравнение with/without RAG.
+- `ai_advent/rag_eval.py` - 10 контрольных вопросов с ожиданиями и ожидаемыми источниками.

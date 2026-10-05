@@ -29,8 +29,11 @@ from ai_advent.orchestration import (
     run_study_orchestration_flow,
 )
 from ai_advent.pipeline import PipelineResult, run_study_note_pipeline
+from ai_advent.rag import RagAnswer, RagComparison, RagResponder
+from ai_advent.rag_eval import format_control_questions
 from ai_advent.scheduler import DEFAULT_SCHEDULER_FILE
 from ai_advent.tokens import TokenReport
+from ai_advent.vector_index import VectorIndex
 
 try:
     from dotenv import load_dotenv
@@ -60,6 +63,7 @@ MEMORY_FILE_ENV = "AI_ADVENT_MEMORY_FILE"
 SCHEDULER_FILE_ENV = "AI_ADVENT_SCHEDULER_FILE"
 NOTES_DIR_ENV = "AI_ADVENT_NOTES_DIR"
 DEFAULT_MEMORY_FILE = ".ai-advent/agent-memory.json"
+DEFAULT_DOCUMENT_INDEX_FILE = ".ai-advent/document-index.json"
 DEFAULT_CONTEXT_STRATEGY = "full"
 DEFAULT_KEEP_LAST = 10
 
@@ -922,7 +926,68 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="use deterministic local hash embeddings instead of an API call",
     )
 
+    rag_parser = subparsers.add_parser(
+        "rag",
+        help="ask questions using a local document index",
+    )
+    rag_subparsers = rag_parser.add_subparsers(dest="rag_command")
+    ask_parser = rag_subparsers.add_parser(
+        "ask",
+        help="answer one question with RAG",
+    )
+    _add_rag_query_arguments(ask_parser)
+    compare_parser = rag_subparsers.add_parser(
+        "compare",
+        help="compare answers with and without RAG",
+    )
+    _add_rag_query_arguments(compare_parser)
+    rag_subparsers.add_parser(
+        "eval-questions",
+        help="print the 10 control questions for the document index",
+    )
+
     return parser.parse_args(argv)
+
+
+def _add_rag_query_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("question", help="question to answer")
+    parser.add_argument(
+        "--index",
+        default=DEFAULT_DOCUMENT_INDEX_FILE,
+        help="JSON document index path",
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=5,
+        help="number of chunks to retrieve",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="chat model name; defaults to AI_ADVENT_MODEL",
+    )
+    parser.add_argument(
+        "--embedding-provider",
+        choices=("openai", "offline", "ollama"),
+        default=None,
+        help="embedding provider used for the query",
+    )
+    parser.add_argument(
+        "--embedding-model",
+        default=None,
+        help="embedding model name; defaults to the model stored in the index",
+    )
+    parser.add_argument(
+        "--ollama-url",
+        default=None,
+        help="Ollama base URL; defaults to AI_ADVENT_OLLAMA_BASE_URL or localhost",
+    )
+    parser.add_argument(
+        "--offline-embeddings",
+        action="store_true",
+        help="use deterministic local hash embeddings for the query",
+    )
 
 
 def main() -> None:
@@ -939,6 +1004,10 @@ def main() -> None:
 
     if args.command == "index":
         run_index_command(args)
+        return
+
+    if args.command == "rag":
+        run_rag_command(args)
         return
 
     if OpenAI is None:
@@ -1134,6 +1203,67 @@ def run_index_command(args: argparse.Namespace) -> None:
     print_index_build_result(result)
 
 
+def run_rag_command(args: argparse.Namespace) -> None:
+    if args.rag_command == "eval-questions":
+        for line in format_control_questions():
+            print(line)
+        return
+    if args.rag_command not in {"ask", "compare"}:
+        print("Usage: ai-advent rag ask|compare|eval-questions ...")
+        raise SystemExit(2)
+    if args.top_k <= 0:
+        print("RAG error: --top-k must be greater than zero.", file=sys.stderr)
+        raise SystemExit(1)
+
+    if OpenAI is None:
+        print(
+            "OpenAI SDK is not installed. Run: python -m pip install -e .",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    api_key = os.getenv(API_KEY_ENV) or os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        print(
+            f"{API_KEY_ENV} is not set. RAG answers still need a chat model API key.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    try:
+        index = VectorIndex.load(args.index)
+    except (OSError, ValueError) as error:
+        print(f"RAG error: cannot load index: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
+
+    embedding_provider = _index_embedding_provider(args)
+    embedding_model = args.embedding_model or index.embedding_model or _index_embedding_model(
+        args,
+        embedding_provider,
+    )
+    embeddings_api = _build_index_embeddings_api(args, embedding_provider)
+    chat_model = args.model or os.getenv(MODEL_ENV) or os.getenv("OPENAI_MODEL") or DEFAULT_MODEL
+    base_url = os.getenv(BASE_URL_ENV) or os.getenv("OPENAI_BASE_URL")
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    responder = RagResponder(
+        index=index,
+        embeddings_api=embeddings_api,
+        embedding_model=embedding_model,
+        chat_completions_api=client.chat.completions,
+        chat_model=chat_model,
+        top_k=args.top_k,
+    )
+
+    try:
+        if args.rag_command == "ask":
+            print_rag_answer(responder.answer(args.question))
+            return
+        print_rag_comparison(responder.compare(args.question))
+    except (RuntimeError, ValueError) as error:
+        print(f"RAG error: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
+
+
 def _index_embedding_provider(args: argparse.Namespace) -> str:
     if args.offline_embeddings:
         return "offline"
@@ -1192,6 +1322,36 @@ def print_index_build_result(result: IndexBuildResult) -> None:
     print(f"  embedding_model: {result.index.embedding_model}")
     for line in format_chunking_comparison(result.index.comparison):
         print(line)
+
+
+def print_rag_answer(answer: RagAnswer) -> None:
+    print("RAG answer:")
+    print(answer.answer)
+    print()
+    print_retrieved_chunks(answer.retrieved)
+
+
+def print_rag_comparison(comparison: RagComparison) -> None:
+    print("Without RAG:")
+    print(comparison.without_rag.text)
+    print()
+    print("With RAG:")
+    print(comparison.with_rag.answer)
+    print()
+    print_retrieved_chunks(comparison.with_rag.retrieved)
+
+
+def print_retrieved_chunks(retrieved: list[object]) -> None:
+    print("Retrieved chunks:")
+    if not retrieved:
+        print("  (none)")
+        return
+    for index, result in enumerate(retrieved, start=1):
+        chunk = result.chunk
+        print(
+            f"  {index}. score={result.score:.4f} "
+            f"source={chunk.source} section={chunk.section} chunk_id={chunk.chunk_id}"
+        )
 
 
 def build_mcp_env(

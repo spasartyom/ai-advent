@@ -302,6 +302,43 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.embedding_model, "nomic-embed-text")
         self.assertEqual(args.ollama_url, "http://127.0.0.1:11434")
 
+    def test_rag_ask_command_is_available(self) -> None:
+        args = parse_args(
+            [
+                "rag",
+                "ask",
+                "Какие команды управляют task state?",
+                "--index",
+                ".ai-advent/document-index.json",
+                "--top-k",
+                "3",
+                "--embedding-provider",
+                "ollama",
+                "--embedding-model",
+                "nomic-embed-text",
+            ]
+        )
+
+        self.assertEqual(args.command, "rag")
+        self.assertEqual(args.rag_command, "ask")
+        self.assertEqual(args.question, "Какие команды управляют task state?")
+        self.assertEqual(args.index, ".ai-advent/document-index.json")
+        self.assertEqual(args.top_k, 3)
+        self.assertEqual(args.embedding_provider, "ollama")
+
+    def test_rag_compare_command_is_available(self) -> None:
+        args = parse_args(["rag", "compare", "Что делает pipeline Дня 19?"])
+
+        self.assertEqual(args.command, "rag")
+        self.assertEqual(args.rag_command, "compare")
+        self.assertEqual(args.question, "Что делает pipeline Дня 19?")
+
+    def test_rag_eval_questions_command_is_available(self) -> None:
+        args = parse_args(["rag", "eval-questions"])
+
+        self.assertEqual(args.command, "rag")
+        self.assertEqual(args.rag_command, "eval-questions")
+
     def test_build_mcp_env_includes_scheduler_file_when_present(self) -> None:
         self.assertEqual(
             build_mcp_env("demo-scheduler.json"),
