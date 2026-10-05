@@ -2,7 +2,13 @@ import unittest
 from types import SimpleNamespace
 
 from ai_advent.chunking import Chunk
-from ai_advent.rag import RagResponder, build_rag_prompt, filter_and_rerank_results
+from ai_advent.rag import (
+    RagResponder,
+    build_citations,
+    build_grounded_rag_prompt,
+    build_rag_prompt,
+    filter_and_rerank_results,
+)
 from ai_advent.vector_index import IndexedChunk, SearchResult, VectorIndex
 
 
@@ -190,6 +196,72 @@ class RagTests(unittest.TestCase):
         self.assertEqual(comparison.improved.candidate_count, 2)
         self.assertEqual(comparison.improved.retrieved[0].chunk.chunk_id, "chunk-memory")
         self.assertEqual(len(chat_api.requests), 3)
+
+    def test_grounded_answer_includes_citations_and_grounded_prompt(self) -> None:
+        chat_api = FakeChatCompletionsAPI()
+        responder = RagResponder(
+            index=_test_index(),
+            embeddings_api=FakeEmbeddingsAPI(),
+            embedding_model="fake-embedding",
+            chat_completions_api=chat_api,
+            chat_model="fake-chat",
+            top_k=1,
+        )
+
+        answer = responder.answer_with_citations(
+            "How does task state work?",
+            min_score=0.1,
+        )
+
+        self.assertEqual(answer.answer, "answer-1")
+        self.assertFalse(answer.refused_for_low_relevance)
+        self.assertEqual(len(answer.citations), 1)
+        self.assertEqual(answer.citations[0].source, "task.py")
+        self.assertEqual(answer.citations[0].chunk_id, "chunk-task")
+        self.assertIn("task state stores stage", answer.citations[0].quote)
+        messages = chat_api.requests[0]["messages"]
+        self.assertIn("Источники", messages[0]["content"])
+        self.assertIn("Разрешенные источники и цитаты", messages[1]["content"])
+
+    def test_grounded_answer_refuses_low_relevance_without_calling_model(self) -> None:
+        chat_api = FakeChatCompletionsAPI()
+        responder = RagResponder(
+            index=_test_index(),
+            embeddings_api=FakeEmbeddingsAPI(),
+            embedding_model="fake-embedding",
+            chat_completions_api=chat_api,
+            chat_model="fake-chat",
+            top_k=1,
+        )
+
+        answer = responder.answer_with_citations(
+            "How does task state work?",
+            min_score=1.1,
+        )
+
+        self.assertTrue(answer.refused_for_low_relevance)
+        self.assertIn("Не знаю", answer.answer)
+        self.assertEqual(answer.citations, [])
+        self.assertEqual(chat_api.requests, [])
+
+    def test_build_citations_and_grounded_prompt_use_chunk_metadata(self) -> None:
+        chunk = Chunk(
+            chunk_id="chunk-1",
+            source="README.md",
+            title="README.md",
+            section="Day 24",
+            text="RAG answers must include sources and quotes from retrieved chunks.",
+        )
+        result = SearchResult(chunk=chunk, score=0.9)
+
+        citations = build_citations([result])
+        prompt = build_grounded_rag_prompt("What must RAG include?", [result], citations)
+
+        self.assertEqual(citations[0].source, "README.md")
+        self.assertEqual(citations[0].section, "Day 24")
+        self.assertEqual(citations[0].chunk_id, "chunk-1")
+        self.assertIn("sources and quotes", citations[0].quote)
+        self.assertIn("README.md | Day 24 | chunk-1", prompt)
 
     def test_rag_rejects_empty_question(self) -> None:
         responder = RagResponder(

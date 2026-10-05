@@ -29,7 +29,13 @@ from ai_advent.orchestration import (
     run_study_orchestration_flow,
 )
 from ai_advent.pipeline import PipelineResult, run_study_note_pipeline
-from ai_advent.rag import RagAnswer, RagComparison, RagResponder, RagRetrievalComparison
+from ai_advent.rag import (
+    GroundedRagAnswer,
+    RagAnswer,
+    RagComparison,
+    RagResponder,
+    RagRetrievalComparison,
+)
 from ai_advent.rag_eval import format_control_questions
 from ai_advent.scheduler import DEFAULT_SCHEDULER_FILE
 from ai_advent.tokens import TokenReport
@@ -946,6 +952,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="compare baseline RAG with filtered, reranked, query-rewritten RAG",
     )
     _add_rag_query_arguments(compare_retrieval_parser)
+    cited_parser = rag_subparsers.add_parser(
+        "cited",
+        help="answer with mandatory sources, quotes, and low-relevance refusal",
+    )
+    _add_rag_query_arguments(cited_parser)
     rag_subparsers.add_parser(
         "eval-questions",
         help="print the 10 control questions for the document index",
@@ -1230,8 +1241,8 @@ def run_rag_command(args: argparse.Namespace) -> None:
         for line in format_control_questions():
             print(line)
         return
-    if args.rag_command not in {"ask", "compare", "compare-retrieval"}:
-        print("Usage: ai-advent rag ask|compare|compare-retrieval|eval-questions ...")
+    if args.rag_command not in {"ask", "compare", "compare-retrieval", "cited"}:
+        print("Usage: ai-advent rag ask|compare|compare-retrieval|cited|eval-questions ...")
         raise SystemExit(2)
     if args.top_k <= 0:
         print("RAG error: --top-k must be greater than zero.", file=sys.stderr)
@@ -1286,6 +1297,16 @@ def run_rag_command(args: argparse.Namespace) -> None:
                     args.question,
                     candidate_k=args.candidate_k,
                     min_score=args.min_score,
+                    rewrite_query=args.rewrite_query,
+                )
+            )
+            return
+        if args.rag_command == "cited":
+            print_grounded_rag_answer(
+                responder.answer_with_citations(
+                    args.question,
+                    candidate_k=args.candidate_k,
+                    min_score=0.2 if args.min_score is None else args.min_score,
                     rewrite_query=args.rewrite_query,
                 )
             )
@@ -1399,6 +1420,29 @@ def print_rag_retrieval_comparison(comparison: RagRetrievalComparison) -> None:
     print(comparison.improved.answer)
     print()
     print_retrieved_chunks(comparison.improved.retrieved)
+
+
+def print_grounded_rag_answer(answer: GroundedRagAnswer) -> None:
+    print("Grounded RAG answer:")
+    print(f"Search query: {answer.search_query or answer.question}")
+    print(f"Candidates before filtering: {answer.candidate_count}")
+    print(f"Low relevance refusal: {answer.refused_for_low_relevance}")
+    print()
+    print(answer.answer)
+    print()
+    print("Sources:")
+    if not answer.citations:
+        print("  (none)")
+    for citation in answer.citations:
+        print(f"  - {citation.source} | {citation.section} | {citation.chunk_id}")
+    print()
+    print("Quotes:")
+    if not answer.citations:
+        print("  (none)")
+    for citation in answer.citations:
+        print(f"  - {citation.quote}")
+    print()
+    print_retrieved_chunks(answer.retrieved)
 
 
 def print_retrieved_chunks(retrieved: list[object]) -> None:

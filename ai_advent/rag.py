@@ -17,6 +17,14 @@ NO_RAG_SYSTEM_PROMPT = (
     "Отвечай по-русски, кратко и по делу, используя только общие знания и вопрос пользователя."
 )
 
+GROUNDING_SYSTEM_PROMPT = (
+    "Ты Study Coach Agent с RAG-контекстом и строгими анти-галлюцинационными правилами. "
+    "Отвечай только на основе найденных фрагментов. "
+    "Верни ответ в трех блоках: `Ответ`, `Источники`, `Цитаты`. "
+    "В источниках используй только source, section и chunk_id из контекста. "
+    "В цитатах используй только короткие фрагменты из контекста."
+)
+
 
 @dataclass(frozen=True)
 class RagAnswer:
@@ -42,6 +50,28 @@ class RagRetrievalComparison:
     question: str
     baseline: RagAnswer
     improved: RagAnswer
+
+
+@dataclass(frozen=True)
+class RagCitation:
+    source: str
+    section: str
+    chunk_id: str
+    quote: str
+
+
+@dataclass(frozen=True)
+class GroundedRagAnswer:
+    question: str
+    answer: str
+    retrieved: list[SearchResult]
+    citations: list[RagCitation]
+    search_query: str = ""
+    candidate_count: int = 0
+    refused_for_low_relevance: bool = False
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
 
 
 class RagResponder:
@@ -170,6 +200,72 @@ class RagResponder:
         rewritten = response.text.strip()
         return rewritten or question
 
+    def answer_with_citations(
+        self,
+        question: str,
+        *,
+        candidate_k: int | None = None,
+        min_score: float = 0.2,
+        rewrite_query: bool = False,
+    ) -> GroundedRagAnswer:
+        if not question.strip():
+            raise ValueError("question cannot be empty.")
+        active_candidate_k = candidate_k or self._top_k
+        if active_candidate_k <= 0:
+            raise ValueError("candidate_k must be greater than zero.")
+
+        search_query = self.rewrite_query(question) if rewrite_query else question
+        query_embedding = create_embeddings(
+            self._embeddings_api,
+            self._embedding_model,
+            [search_query],
+        ).embeddings[0]
+        candidates = self._index.search(query_embedding, top_k=active_candidate_k)
+        retrieved = filter_and_rerank_results(
+            question,
+            candidates,
+            top_k=self._top_k,
+            min_score=min_score,
+        )
+        citations = build_citations(retrieved)
+        if not retrieved:
+            return GroundedRagAnswer(
+                question=question,
+                answer=(
+                    "Не знаю: в локальном индексе не нашлось достаточно "
+                    "релевантного контекста. Уточните вопрос или соберите индекс "
+                    "по более подходящим документам."
+                ),
+                retrieved=[],
+                citations=[],
+                search_query=search_query,
+                candidate_count=len(candidates),
+                refused_for_low_relevance=True,
+            )
+
+        response = create_chat_completion(
+            self._chat_completions_api,
+            self._chat_model,
+            [
+                {"role": "system", "content": GROUNDING_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": build_grounded_rag_prompt(question, retrieved, citations),
+                },
+            ],
+        )
+        return GroundedRagAnswer(
+            question=question,
+            answer=response.text,
+            retrieved=retrieved,
+            citations=citations,
+            search_query=search_query,
+            candidate_count=len(candidates),
+            prompt_tokens=response.prompt_tokens,
+            completion_tokens=response.completion_tokens,
+            total_tokens=response.total_tokens,
+        )
+
 
 def filter_and_rerank_results(
     question: str,
@@ -210,6 +306,41 @@ def build_rag_prompt(question: str, retrieved: list[SearchResult]) -> str:
     )
 
 
+def build_grounded_rag_prompt(
+    question: str,
+    retrieved: list[SearchResult],
+    citations: list[RagCitation],
+) -> str:
+    context = "\n\n".join(
+        _format_retrieved_chunk(index, result)
+        for index, result in enumerate(retrieved, start=1)
+    )
+    citation_block = "\n".join(
+        f"- {citation.source} | {citation.section} | {citation.chunk_id}: {citation.quote}"
+        for citation in citations
+    )
+    return (
+        "Ответь на вопрос пользователя строго по найденному контексту.\n"
+        "Обязательно включи три блока: `Ответ`, `Источники`, `Цитаты`.\n"
+        "Не добавляй факты, которых нет в контексте.\n\n"
+        f"Вопрос:\n{question}\n\n"
+        f"Разрешенные источники и цитаты:\n{citation_block}\n\n"
+        f"Найденный контекст:\n{context}"
+    )
+
+
+def build_citations(retrieved: list[SearchResult]) -> list[RagCitation]:
+    return [
+        RagCitation(
+            source=result.chunk.source,
+            section=result.chunk.section,
+            chunk_id=result.chunk.chunk_id,
+            quote=_short_quote(result.chunk.text),
+        )
+        for result in retrieved
+    ]
+
+
 def _format_retrieved_chunk(index: int, result: SearchResult) -> str:
     chunk = result.chunk
     return (
@@ -239,3 +370,10 @@ def _tokens(text: str) -> list[str]:
             for character in text
         ).split()
     ]
+
+
+def _short_quote(text: str, max_length: int = 220) -> str:
+    compact = " ".join(text.split())
+    if len(compact) <= max_length:
+        return compact
+    return compact[: max_length - 3].rstrip() + "..."
