@@ -353,6 +353,25 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.min_score, 0.35)
         self.assertTrue(args.rewrite_query)
 
+    def test_rag_cited_command_is_available(self) -> None:
+        args = parse_args(
+            [
+                "rag",
+                "cited",
+                "Какие источники есть у ответа?",
+                "--min-score",
+                "0.25",
+                "--candidate-k",
+                "10",
+            ]
+        )
+
+        self.assertEqual(args.command, "rag")
+        self.assertEqual(args.rag_command, "cited")
+        self.assertEqual(args.question, "Какие источники есть у ответа?")
+        self.assertEqual(args.min_score, 0.25)
+        self.assertEqual(args.candidate_k, 10)
+
     def test_rag_eval_questions_command_is_available(self) -> None:
         args = parse_args(["rag", "eval-questions"])
 

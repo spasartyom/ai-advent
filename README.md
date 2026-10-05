@@ -956,3 +956,60 @@ ai-advent rag compare-retrieval "Какие две стратегии chunking �
 - query rewrite - отдельный Chat Completions вызов;
 - similarity threshold - простой числовой фильтр;
 - reranking - локальная эвристика поверх similarity и пересечения ключевых слов.
+
+### День 24: цитаты, источники и анти-галлюцинации
+
+RAG получил grounded-режим с обязательными источниками, цитатами и отказом при слабом контексте.
+
+Команда:
+
+```bash
+ai-advent rag cited "Какие метаданные сохраняются у каждого чанка?" --embedding-provider ollama --embedding-model nomic-embed-text --index .ai-advent/document-index.json --top-k 5 --candidate-k 20 --min-score 0.2 --rewrite-query
+```
+
+Что делает `rag cited`:
+
+1. Ищет релевантные чанки через тот же retrieval pipeline.
+2. Отсекает чанки ниже `--min-score`.
+3. Собирает детерминированные источники и короткие цитаты из найденных чанков.
+4. Отправляет модели prompt со строгим требованием вернуть блоки `Ответ`, `Источники`, `Цитаты`.
+5. Дополнительно печатает источники и цитаты из кода, чтобы результат можно было проверить даже если модель форматирует ответ свободно.
+
+Если после фильтрации нет релевантных чанков, модель не вызывается.
+CLI отвечает:
+
+```text
+Не знаю: в локальном индексе не нашлось достаточно релевантного контекста. Уточните вопрос или соберите индекс по более подходящим документам.
+```
+
+Проверка режима “не знаю”:
+
+```bash
+ai-advent rag cited "Как приготовить ризотто?" --embedding-provider ollama --embedding-model nomic-embed-text --index .ai-advent/document-index.json --min-score 0.95
+```
+
+Для offline demo:
+
+```bash
+ai-advent rag cited "Какие две стратегии chunking реализованы?" --offline-embeddings --index .ai-advent/document-index-offline.json --top-k 5 --candidate-k 20 --min-score 0.1
+```
+
+В выводе есть:
+
+- `Grounded RAG answer` - ответ модели или отказ “не знаю”;
+- `Sources` - список `source | section | chunk_id`;
+- `Quotes` - короткие фрагменты из найденных чанков;
+- `Retrieved chunks` - технический список чанков с similarity score.
+
+Контрольные вопросы для ручной проверки:
+
+```bash
+ai-advent rag eval-questions
+```
+
+Для каждого из 10 вопросов проверьте:
+
+1. Есть ли источники.
+2. Есть ли цитаты.
+3. Совпадает ли смысл ответа с цитатами.
+4. Срабатывает ли “не знаю” при завышенном `--min-score`.
