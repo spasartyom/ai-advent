@@ -23,6 +23,8 @@ class RagAnswer:
     question: str
     answer: str
     retrieved: list[SearchResult]
+    search_query: str = ""
+    candidate_count: int = 0
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
@@ -33,6 +35,13 @@ class RagComparison:
     question: str
     without_rag: ChatResponse
     with_rag: RagAnswer
+
+
+@dataclass(frozen=True)
+class RagRetrievalComparison:
+    question: str
+    baseline: RagAnswer
+    improved: RagAnswer
 
 
 class RagResponder:
@@ -55,16 +64,33 @@ class RagResponder:
         self._chat_model = chat_model
         self._top_k = top_k
 
-    def answer(self, question: str) -> RagAnswer:
+    def answer(
+        self,
+        question: str,
+        *,
+        candidate_k: int | None = None,
+        min_score: float | None = None,
+        rewrite_query: bool = False,
+    ) -> RagAnswer:
         if not question.strip():
             raise ValueError("question cannot be empty.")
+        active_candidate_k = candidate_k or self._top_k
+        if active_candidate_k <= 0:
+            raise ValueError("candidate_k must be greater than zero.")
 
+        search_query = self.rewrite_query(question) if rewrite_query else question
         query_embedding = create_embeddings(
             self._embeddings_api,
             self._embedding_model,
-            [question],
+            [search_query],
         ).embeddings[0]
-        retrieved = self._index.search(query_embedding, top_k=self._top_k)
+        candidates = self._index.search(query_embedding, top_k=active_candidate_k)
+        retrieved = filter_and_rerank_results(
+            question,
+            candidates,
+            top_k=self._top_k,
+            min_score=min_score,
+        )
         response = create_chat_completion(
             self._chat_completions_api,
             self._chat_model,
@@ -80,6 +106,8 @@ class RagResponder:
             question=question,
             answer=response.text,
             retrieved=retrieved,
+            search_query=search_query,
+            candidate_count=len(candidates),
             prompt_tokens=response.prompt_tokens,
             completion_tokens=response.completion_tokens,
             total_tokens=response.total_tokens,
@@ -103,6 +131,66 @@ class RagResponder:
             without_rag=without_rag,
             with_rag=with_rag,
         )
+
+    def compare_retrieval(
+        self,
+        question: str,
+        *,
+        candidate_k: int,
+        min_score: float,
+    ) -> RagRetrievalComparison:
+        baseline = self.answer(question)
+        improved = self.answer(
+            question,
+            candidate_k=candidate_k,
+            min_score=min_score,
+            rewrite_query=True,
+        )
+        return RagRetrievalComparison(
+            question=question,
+            baseline=baseline,
+            improved=improved,
+        )
+
+    def rewrite_query(self, question: str) -> str:
+        response = create_chat_completion(
+            self._chat_completions_api,
+            self._chat_model,
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "Ты переписываешь вопросы для поиска по локальному индексу. "
+                        "Верни только короткий поисковый запрос без пояснений."
+                    ),
+                },
+                {"role": "user", "content": question},
+            ],
+        )
+        rewritten = response.text.strip()
+        return rewritten or question
+
+
+def filter_and_rerank_results(
+    question: str,
+    candidates: list[SearchResult],
+    *,
+    top_k: int,
+    min_score: float | None,
+) -> list[SearchResult]:
+    if top_k <= 0:
+        raise ValueError("top_k must be greater than zero.")
+
+    filtered = [
+        result
+        for result in candidates
+        if min_score is None or result.score >= min_score
+    ]
+    return sorted(
+        filtered,
+        key=lambda result: _rerank_score(question, result),
+        reverse=True,
+    )[:top_k]
 
 
 def build_rag_prompt(question: str, retrieved: list[SearchResult]) -> str:
@@ -132,3 +220,22 @@ def _format_retrieved_chunk(index: int, result: SearchResult) -> str:
         f"chunk_id: {chunk.chunk_id}\n"
         f"text:\n{chunk.text}"
     )
+
+
+def _rerank_score(question: str, result: SearchResult) -> float:
+    question_tokens = set(_tokens(question))
+    chunk_tokens = set(_tokens(result.chunk.text))
+    if not question_tokens:
+        return result.score
+    overlap = len(question_tokens & chunk_tokens) / len(question_tokens)
+    return result.score + overlap * 0.05
+
+
+def _tokens(text: str) -> list[str]:
+    return [
+        token.lower()
+        for token in "".join(
+            character if character.isalnum() else " "
+            for character in text
+        ).split()
+    ]

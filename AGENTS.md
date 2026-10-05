@@ -6,7 +6,7 @@ Current state: week 5 has started and builds RAG capabilities on top of the Stud
 Week 1 is archived in Git tags and should not shape new implementation unless we explicitly need to inspect old exercises.
 Week 3 developed the CLI agent into a Study Coach Agent.
 Week 4 connected the Study Coach to MCP tools, scheduled background work, tool pipelines, and multi-server orchestration.
-Week 5 adds local document indexing and the first RAG question-answer flow.
+Week 5 adds local document indexing, the first RAG question-answer flow, and retrieval quality improvements.
 
 ## Challenge State
 
@@ -47,6 +47,7 @@ Week 5 has started:
 
 - `w5_d1` / Day 21 - local document indexing with chunking, embeddings, JSON vector index, metadata, and chunking strategy comparison
 - `w5_d2` / Day 22 - first RAG request with retrieval, RAG prompt construction, with-RAG/without-RAG comparison, and 10 control questions
+- `w5_d3` / Day 23 - RAG filtering, heuristic reranking, query rewrite, and baseline/improved retrieval comparison
 
 ## Current Product Shape
 
@@ -78,6 +79,7 @@ Week 5 also adds document index and RAG commands:
 ai-advent index build README.md AGENTS.md ai_advent tests --embedding-provider ollama --embedding-model nomic-embed-text
 ai-advent rag ask "Какие команды CLI управляют task state?"
 ai-advent rag compare "Какие команды CLI управляют task state?"
+ai-advent rag compare-retrieval "Какие метаданные сохраняются у каждого чанка?"
 ai-advent rag eval-questions
 ```
 
@@ -125,7 +127,7 @@ Responsibilities:
 - expose `ai-advent mcp list-tools`, `call-tool`, `run-pipeline`, and `orchestrate`;
 - expose `ai-advent worker` for running due scheduler tasks;
 - expose `ai-advent index build` for document indexing;
-- expose `ai-advent rag ask`, `compare`, and `eval-questions` for first RAG workflows.
+- expose `ai-advent rag ask`, `compare`, `compare-retrieval`, and `eval-questions` for first RAG workflows.
 
 This file should stay thin. Avoid putting agent logic, memory logic, token
 accounting, context strategies, MCP transport logic, scheduler persistence, pipeline logic, orchestration logic, document loading, chunking, embedding provider logic, vector search, or RAG prompt construction here.
@@ -400,16 +402,21 @@ Responsibilities:
 
 ### `ai_advent/rag.py`
 
-First RAG request pipeline for Day 22.
+RAG request pipeline for Week 5.
 
 Responsibilities:
 
 - embed the user question;
 - retrieve relevant chunks from `VectorIndex`;
+- optionally rewrite the question into a search-oriented query before embedding;
+- retrieve a larger candidate set before filtering and reranking when configured;
+- filter weak candidates by similarity threshold;
+- rerank candidates with a deterministic heuristic that combines similarity and keyword overlap;
 - build a RAG prompt that includes question, retrieved context, scores, and chunk metadata;
 - call the low-level chat helper for a with-RAG answer;
 - call the low-level chat helper for a without-RAG answer in comparison mode;
-- return structured `RagAnswer` and `RagComparison` values.
+- compare baseline RAG with improved retrieval through query rewrite, filtering, and reranking;
+- return structured `RagAnswer`, `RagComparison`, and `RagRetrievalComparison` values.
 
 ### `ai_advent/rag_eval.py`
 
@@ -637,6 +644,7 @@ CLI commands:
 
 - `ai-advent rag ask QUESTION`
 - `ai-advent rag compare QUESTION`
+- `ai-advent rag compare-retrieval QUESTION`
 - `ai-advent rag eval-questions`
 
 Current flow:
@@ -656,7 +664,15 @@ The command currently requires a Chat Completions API key for answer generation,
 Day 22 includes 10 control questions in `rag_eval.py`.
 Each question records the expected answer content and expected sources for manual quality comparison.
 
-Keep Day 22 RAG explicit through CLI commands and `rag.py`.
+Day 23 adds retrieval quality improvements:
+
+- query rewrite through a separate Chat Completions request;
+- configurable candidate pool before filtering through `--candidate-k`;
+- similarity threshold filtering through `--min-score`;
+- deterministic heuristic reranking with similarity plus keyword overlap;
+- `rag compare-retrieval` for baseline RAG versus improved RAG comparison.
+
+Keep Week 5 RAG explicit through CLI commands and `rag.py`.
 Do not hide automatic RAG retrieval inside `Agent.run_turn` until a future day explicitly requires a production-like chat integration.
 
 ### `tests/`
@@ -684,6 +700,7 @@ Current tests cover:
 - document loading, chunking, embeddings adapters, vector index persistence, and index search;
 - document index CLI command parsing;
 - RAG prompt construction, retrieval, with-RAG answers, and with/without-RAG comparison;
+- RAG query rewrite, similarity filtering, heuristic reranking, and baseline/improved retrieval comparison;
 - RAG CLI command parsing and control-question formatting;
 - multiline CLI paste mode;
 - defensive copying of messages;
@@ -719,7 +736,7 @@ Week 2, Week 3, and Week 4 implementations are finished. Preserve their shape un
 - Embedding provider adapters belong in `embeddings.py`.
 - Vector storage and similarity search belong in `vector_index.py`.
 - Document index construction belongs in `indexing.py`.
-- RAG retrieval, prompt construction, and with/without-RAG comparison belong in `rag.py`.
+- RAG retrieval, prompt construction, filtering, reranking, query rewrite, and with/without-RAG comparison belong in `rag.py`.
 - RAG control questions belong in `rag_eval.py`.
 
 Preferred design:
